@@ -12,6 +12,8 @@ defaults:
 jobs:
 
   test:
+    permissions:
+      contents: read
     name: Run tests
     strategy:
       matrix:
@@ -64,6 +66,8 @@ jobs:
   # that the benchmark code runs and doesn't crash. GitHub Action runners don't
   # have a stable enough environment to produce reliable benchmark numbers.
   benchmark:
+    permissions:
+      contents: read
     name: Run benchmarks
     runs-on: ubuntu-latest
     steps:
@@ -77,6 +81,8 @@ jobs:
       run: go test -bench=. -run='^$' ./...
 
   upload-coverage:
+    permissions:
+      contents: read
     name: Upload test coverage
     strategy:
       matrix:
@@ -97,6 +103,8 @@ jobs:
         flags: ${{ matrix.ostype }}
 
   buildall:
+    permissions:
+      contents: read
     name: Build binaries
     runs-on: ubuntu-latest
     steps:
@@ -124,6 +132,8 @@ jobs:
         path: bin/**/*
 
   checkstyle-go:
+    permissions:
+      contents: read
     name: Check style of **.go
     runs-on: ubuntu-latest
     steps:
@@ -139,6 +149,8 @@ jobs:
       run: ./tools/checkstyle-go.sh
 
   checkstyle-md:
+    permissions:
+      contents: read
     name: Check style of **.md
     runs-on: ubuntu-latest
     steps:
@@ -158,6 +170,8 @@ jobs:
       run: ./tools/checkstyle-md.sh
 
   codespell:
+    permissions:
+      contents: read
     name: Check spelling
     runs-on: ubuntu-latest
     steps:
@@ -171,6 +185,8 @@ jobs:
       run: codespell
 
   lint:
+    permissions:
+      contents: read
     name: Run linters
     runs-on: ubuntu-latest
     steps:
