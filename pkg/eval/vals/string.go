@@ -14,8 +14,8 @@ type Stringer interface {
 
 // ToString converts a Value to string. It is implemented for the builtin
 // float64 and string types, and type satisfying the Stringer interface. It
-// falls back to Repr(v, NoPretty).
-func ToString(v interface{}) string {
+// falls back to Repr(v).
+func ToString(v any) string {
 	switch v := v.(type) {
 	case int:
 		return strconv.Itoa(v)
@@ -27,7 +27,7 @@ func ToString(v interface{}) string {
 	case Stringer:
 		return v.String()
 	default:
-		return Repr(v, NoPretty)
+		return ReprPlain(v)
 	}
 }
 

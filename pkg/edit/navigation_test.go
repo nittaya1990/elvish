@@ -5,9 +5,9 @@ import (
 	"testing"
 
 	"src.elv.sh/pkg/cli/lscolors"
-	"src.elv.sh/pkg/testutil"
-
 	"src.elv.sh/pkg/cli/term"
+	"src.elv.sh/pkg/must"
+	"src.elv.sh/pkg/testutil"
 	"src.elv.sh/pkg/ui"
 )
 
@@ -20,8 +20,8 @@ func TestNavigation(t *testing.T) {
 		filepath.Join("~", "d"), "> ",
 		"put", Styles,
 		"vvv", term.DotHere, "\n",
-		" NAVIGATING  \n", Styles,
-		"************ ",
+		" NAVIGATING            Ctrl-H hidden Ctrl-F filter\n", Styles,
+		"************           ++++++        ++++++       ",
 		" d      a                 \n", Styles,
 		"###### ++++++++++++++++++ ",
 		"        e                ", Styles,
@@ -29,7 +29,7 @@ func TestNavigation(t *testing.T) {
 	)
 
 	// Test $edit:selected-file.
-	evals(f.Evaler, `file = $edit:selected-file`)
+	evals(f.Evaler, `var file = $edit:selected-file`)
 	wantFile := "a"
 	if file, _ := f.Evaler.Global().Index("file"); file != wantFile {
 		t.Errorf("Got $edit:selected-file %q, want %q", file, wantFile)
@@ -41,8 +41,8 @@ func TestNavigation(t *testing.T) {
 		filepath.Join("~", "d"), "> ",
 		"put a", Styles,
 		"vvv ", term.DotHere, "\n",
-		" NAVIGATING  \n", Styles,
-		"************ ",
+		" NAVIGATING            Ctrl-H hidden Ctrl-F filter\n", Styles,
+		"************           ++++++        ++++++       ",
 		" d      a                 \n", Styles,
 		"###### ++++++++++++++++++ ",
 		"        e                ", Styles,
@@ -61,12 +61,12 @@ func TestNavigation(t *testing.T) {
 func TestNavigation_WidthRatio(t *testing.T) {
 	f := setupNav(t)
 
-	evals(f.Evaler, `@edit:navigation:width-ratio = 1 1 1`)
+	evals(f.Evaler, `set @edit:navigation:width-ratio = 1 1 1`)
 	f.TTYCtrl.Inject(term.K('N', ui.Ctrl))
 	f.TestTTY(t,
 		filepath.Join("~", "d"), "> ", term.DotHere, "\n",
-		" NAVIGATING  \n", Styles,
-		"************ ",
+		" NAVIGATING            Ctrl-H hidden Ctrl-F filter\n", Styles,
+		"************           ++++++        ++++++       ",
 		" d                a               \n", Styles,
 		"################ ++++++++++++++++ ",
 		"                  e              ", Styles,
@@ -136,13 +136,33 @@ func TestNavigation_EnterDoesNothingInEmptyDir(t *testing.T) {
 		filepath.Join("~", "d", "e"), "> ",
 		"put", Styles,
 		"vvv", term.DotHere, "\n",
-		" NAVIGATING  \n", Styles,
-		"************ ",
+		" NAVIGATING            Ctrl-H hidden Ctrl-F filter\n", Styles,
+		"************           ++++++        ++++++       ",
 		" a                        \n", Styles,
 		"                          ",
 		" e    ", Styles,
 		"######",
 	)
+}
+
+func TestNavigation_UsesEvalerChdir(t *testing.T) {
+	f := setupNav(t)
+	afterChdirCalled := false
+	f.Evaler.AfterChdir = append(f.Evaler.AfterChdir, func(dir string) {
+		afterChdirCalled = true
+	})
+
+	f.TTYCtrl.Inject(term.K('N', ui.Ctrl))
+	f.TTYCtrl.Inject(term.K(ui.Down))      // select directory "e"
+	f.TTYCtrl.Inject(term.K(ui.Right))     // mode into "e"
+	f.TTYCtrl.Inject(term.K('[', ui.Ctrl)) // quit navigation mode
+
+	f.TestTTY(t,
+		filepath.Join("~", "d", "e"), "> ", term.DotHere)
+
+	if !afterChdirCalled {
+		t.Errorf("afterChdir not called")
+	}
 }
 
 var testDir = testutil.Dir{
@@ -156,6 +176,6 @@ func setupNav(c testutil.Cleanuper) *fixture {
 	f := setup(c)
 	lscolors.SetTestLsColors(c)
 	testutil.ApplyDir(testDir)
-	testutil.MustChdir("d")
+	must.Chdir("d")
 	return f
 }

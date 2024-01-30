@@ -9,10 +9,9 @@ import (
 	"src.elv.sh/pkg/cli/term"
 	"src.elv.sh/pkg/env"
 	"src.elv.sh/pkg/eval"
-	"src.elv.sh/pkg/eval/vars"
-	"src.elv.sh/pkg/parse"
 	"src.elv.sh/pkg/testutil"
 	"src.elv.sh/pkg/tt"
+	"src.elv.sh/pkg/ui"
 )
 
 // High-level sanity test.
@@ -20,45 +19,43 @@ import (
 func TestHighlighter(t *testing.T) {
 	f := setup(t)
 
+	// Highlighting
 	feedInput(f.TTYCtrl, "put $true")
 	f.TestTTY(t,
 		"~> put $true", Styles,
 		"   vvv $$$$$", term.DotHere,
 	)
 
+	// Check errors
 	feedInput(f.TTYCtrl, "x")
 	f.TestTTY(t,
 		"~> put $truex", Styles,
 		"   vvv ??????", term.DotHere, "\n",
-		"compilation error: 4-10 in [tty]: variable $truex not found",
+		"compilation error: [interactive]:1:5-10: variable $truex not found",
+	)
+}
+
+func TestHighlighter_Autofix(t *testing.T) {
+	f := setup(t)
+	f.Evaler.AddModule("mod1", &eval.Ns{})
+
+	feedInput(f.TTYCtrl, "put $mod1:")
+	f.TestTTY(t,
+		"~> put $mod1:", Styles,
+		"   vvv ??????", term.DotHere, "\n",
+		"compilation error: [interactive]:1:5-10: variable $mod1: not found\n",
+		"Ctrl-A autofix: use mod1 Tab Enter autofix first", Styles,
+		"++++++                   +++ +++++",
+	)
+
+	f.TTYCtrl.Inject(term.K('A', ui.Ctrl))
+	f.TestTTY(t,
+		"~> put $mod1:", Styles,
+		"   vvv $$$$$$", term.DotHere,
 	)
 }
 
 // Fine-grained tests against the highlighter.
-
-func TestCheck(t *testing.T) {
-	ev := eval.NewEvaler()
-	ev.AddGlobal(eval.NsBuilder{"good": vars.FromInit(0)}.Ns())
-
-	tt.Test(t, tt.Fn("check", check), tt.Table{
-		tt.Args(ev, mustParse("")).Rets(noError),
-		tt.Args(ev, mustParse("echo $good")).Rets(noError),
-		// TODO: Check the range of the returned error
-		tt.Args(ev, mustParse("echo $bad")).Rets(anyError),
-	})
-}
-
-type anyErrorMatcher struct{}
-
-func (anyErrorMatcher) Match(ret tt.RetValue) bool {
-	err, _ := ret.(error)
-	return err != nil
-}
-
-var (
-	noError  = error(nil)
-	anyError anyErrorMatcher
-)
 
 const colonInFilenameOk = runtime.GOOS != "windows"
 
@@ -67,14 +64,12 @@ func TestMakeHasCommand(t *testing.T) {
 
 	// Set up global functions and modules in the evaler.
 	goodFn := eval.NewGoFn("good", func() {})
-	ev.AddGlobal(eval.NsBuilder{}.
+	ev.ExtendGlobal(eval.BuildNs().
 		AddFn("good", goodFn).
 		AddNs("a",
-			eval.NsBuilder{}.
+			eval.BuildNs().
 				AddFn("good", goodFn).
-				AddNs("b", eval.NsBuilder{}.AddFn("good", goodFn).Ns()).
-				Ns()).
-		Ns())
+				AddNs("b", eval.BuildNs().AddFn("good", goodFn))))
 
 	// Set up environment.
 	testDir := testutil.InTempDir(t)
@@ -95,49 +90,41 @@ func TestMakeHasCommand(t *testing.T) {
 	mustMkdirAll("a/b/c")
 	mustMkExecutable("a/b/c/executable")
 
-	tt.Test(t, tt.Fn("hasCommand", hasCommand), tt.Table{
+	tt.Test(t, hasCommand,
 		// Builtin special form
-		tt.Args(ev, "if").Rets(true),
+		Args(ev, "if").Rets(true),
 
 		// Builtin function
-		tt.Args(ev, "put").Rets(true),
+		Args(ev, "put").Rets(true),
 
 		// User-defined function
-		tt.Args(ev, "good").Rets(true),
+		Args(ev, "good").Rets(true),
 
 		// Function in modules
-		tt.Args(ev, "a:good").Rets(true),
-		tt.Args(ev, "a:b:good").Rets(true),
-		tt.Args(ev, "a:bad").Rets(false),
-		tt.Args(ev, "a:b:bad").Rets(false),
+		Args(ev, "a:good").Rets(true),
+		Args(ev, "a:b:good").Rets(true),
+		Args(ev, "a:bad").Rets(false),
+		Args(ev, "a:b:bad").Rets(false),
 
 		// Non-searching directory and external
-		tt.Args(ev, "./a").Rets(true),
-		tt.Args(ev, "a/b").Rets(true),
-		tt.Args(ev, "a/b/c/executable").Rets(true),
-		tt.Args(ev, "./bad").Rets(false),
-		tt.Args(ev, "a/bad").Rets(false),
+		Args(ev, "./a").Rets(true),
+		Args(ev, "a/b").Rets(true),
+		Args(ev, "a/b/c/executable").Rets(true),
+		Args(ev, "./bad").Rets(false),
+		Args(ev, "a/bad").Rets(false),
 
 		// External in PATH
-		tt.Args(ev, "external").Rets(true),
-		tt.Args(ev, "@external").Rets(true),
-		tt.Args(ev, "ex:tern:al").Rets(colonInFilenameOk),
+		Args(ev, "external").Rets(true),
+		Args(ev, "@external").Rets(true),
+		Args(ev, "ex:tern:al").Rets(colonInFilenameOk),
 		// With explicit e:
-		tt.Args(ev, "e:external").Rets(true),
-		tt.Args(ev, "e:bad-external").Rets(false),
+		Args(ev, "e:external").Rets(true),
+		Args(ev, "e:bad-external").Rets(false),
 
 		// Non-existent
-		tt.Args(ev, "bad").Rets(false),
-		tt.Args(ev, "a:").Rets(false),
-	})
-}
-
-func mustParse(src string) parse.Tree {
-	tree, err := parse.Parse(parse.SourceForTest(src), parse.Config{})
-	if err != nil {
-		panic(err)
-	}
-	return tree
+		Args(ev, "bad").Rets(false),
+		Args(ev, "a:").Rets(false),
+	)
 }
 
 func mustMkdirAll(path string) {

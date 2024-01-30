@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	"src.elv.sh/pkg/diag"
+	"src.elv.sh/pkg/errutil"
 	"src.elv.sh/pkg/parse"
 	"src.elv.sh/pkg/parse/cmpd"
 )
@@ -19,12 +19,12 @@ import (
 func Compile(q string) (Filter, error) {
 	qn, errParse := parseFilter(q)
 	filter, errCompile := compileFilter(qn)
-	return filter, diag.Errors(errParse, errCompile)
+	return filter, errutil.Multi(errParse, errCompile)
 }
 
 func parseFilter(q string) (*parse.Filter, error) {
 	qn := &parse.Filter{}
-	err := parse.ParseAs(parse.Source{Name: "filter", Code: q}, qn, parse.Config{})
+	err := parse.ParseAs(parse.Source{Name: "[filter]", Code: q}, qn, parse.Config{})
 	return qn, err
 }
 

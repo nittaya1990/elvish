@@ -13,25 +13,12 @@ import (
 
 // Numerical operations.
 
-//elvdoc:fn rand
-//
-// ```elvish
-// rand
-// ```
-//
-// Output a pseudo-random number in the interval [0, 1). Example:
-//
-// ```elvish-transcript
-// ~> rand
-// ▶ 0.17843564133528436
-// ```
-
 func init() {
-	addBuiltinFns(map[string]interface{}{
+	addBuiltinFns(map[string]any{
 		// Constructor
-		"float64":   toFloat64,
-		"num":       num,
-		"exact-num": exactNum,
+		"num":         num,
+		"exact-num":   exactNum,
+		"inexact-num": inexactNum,
 
 		// Comparison
 		"<":  lt,
@@ -50,77 +37,19 @@ func init() {
 		"%": rem,
 
 		// Random
-		"rand":    rand.Float64,
-		"randint": randint,
-	})
-}
+		"rand":      rand.Float64,
+		"randint":   randint,
+		"-randseed": randseed,
 
-//elvdoc:fn num
-//
-// ```elvish
-// num $string-or-number
-// ```
-//
-// Constructs a [typed number](./language.html#number).
-//
-// If the argument is a string, this command outputs the typed number the
-// argument represents, or raises an exception if the argument is not a valid
-// representation of a number. If the argument is already a typed number, this
-// command outputs it as is.
-//
-// This command is usually not needed for working with numbers; see the
-// discussion of [numerical commands](#numerical-commands).
-//
-// Examples:
-//
-// ```elvish-transcript
-// ~> num 10
-// ▶ (num 10)
-// ~> num 0x10
-// ▶ (num 16)
-// ~> num 1/12
-// ▶ (num 1/12)
-// ~> num 3.14
-// ▶ (num 3.14)
-// ~> num (num 10)
-// ▶ (num 10)
-// ```
+		"range": rangeFn,
+	})
+
+}
 
 func num(n vals.Num) vals.Num {
 	// Conversion is actually handled in vals/conversion.go.
 	return n
 }
-
-//elvdoc:fn exact-num
-//
-// ```elvish
-// exact-num $string-or-number
-// ```
-//
-// Coerces the argument to an exact number. If the argument is infinity or NaN,
-// an exception is thrown.
-//
-// If the argument is a string, it is converted to a typed number first. If the
-// argument is already an exact number, it is returned as is.
-//
-// Examples:
-//
-// ```elvish-transcript
-// ~> exact-num (num 0.125)
-// ▶ (num 1/8)
-// ~> exact-num 0.125
-// ▶ (num 1/8)
-// ~> exact-num (num 1)
-// ▶ (num 1)
-// ```
-//
-// Beware that seemingly simple fractions that can't be represented precisely in
-// binary can result in the denominator being a very large power of 2:
-//
-// ```elvish-transcript
-// ~> exact-num 0.1
-// ▶ (num 3602879701896397/36028797018963968)
-// ```
 
 func exactNum(n vals.Num) (vals.Num, error) {
 	if f, ok := n.(float64); ok {
@@ -134,64 +63,9 @@ func exactNum(n vals.Num) (vals.Num, error) {
 	return n, nil
 }
 
-//elvdoc:fn float64
-//
-// ```elvish
-// float64 $string-or-number
-// ```
-//
-// Constructs a floating-point number.
-//
-// This command is deprecated; use [`num`](#num) instead.
-
-func toFloat64(f float64) float64 {
+func inexactNum(f float64) float64 {
 	return f
 }
-
-//elvdoc:fn &lt; &lt;= == != &gt; &gt;= {#num-cmp}
-//
-// ```elvish
-// <  $number... # less
-// <= $number... # less or equal
-// == $number... # equal
-// != $number... # not equal
-// >  $number... # greater
-// >= $number... # greater or equal
-// ```
-//
-// Number comparisons. All of them accept an arbitrary number of arguments:
-//
-// 1.  When given fewer than two arguments, all output `$true`.
-//
-// 2.  When given two arguments, output whether the two arguments satisfy the named
-// relationship.
-//
-// 3.  When given more than two arguments, output whether every adjacent pair of
-// numbers satisfy the named relationship.
-//
-// Examples:
-//
-// ```elvish-transcript
-// ~> == 3 3.0
-// ▶ $true
-// ~> < 3 4
-// ▶ $true
-// ~> < 3 4 10
-// ▶ $true
-// ~> < 6 9 1
-// ▶ $false
-// ```
-//
-// As a consequence of rule 3, the `!=` command outputs `$true` as long as any
-// _adjacent_ pair of numbers are not equal, even if some numbers that are not
-// adjacent are equal:
-//
-// ```elvish-transcript
-// ~> != 5 5 4
-// ▶ $false
-// ~> != 5 6 5
-// ▶ $true
-// ```
 
 func lt(nums ...vals.Num) bool {
 	return chainCompare(nums,
@@ -266,27 +140,6 @@ func chainCompare(nums []vals.Num,
 	return true
 }
 
-//elvdoc:fn + {#add}
-//
-// ```elvish
-// + $num...
-// ```
-//
-// Outputs the sum of all arguments, or 0 when there are no arguments.
-//
-// This command is [exactness-preserving](#exactness-preserving).
-//
-// Examples:
-//
-// ```elvish-transcript
-// ~> + 5 2 7
-// ▶ (num 14)
-// ~> + 1/2 1/3 1/4
-// ▶ (num 13/12)
-// ~> + 1/2 0.5
-// ▶ (num 1.0)
-// ```
-
 func add(rawNums ...vals.Num) vals.Num {
 	nums := vals.UnifyNums(rawNums, vals.BigInt)
 	switch nums := nums.(type) {
@@ -312,35 +165,6 @@ func add(rawNums ...vals.Num) vals.Num {
 		panic("unreachable")
 	}
 }
-
-//elvdoc:fn - {#sub}
-//
-// ```elvish
-// - $x-num $y-num...
-// ```
-//
-// Outputs the result of subtracting from `$x-num` all the `$y-num`s, working
-// from left to right. When no `$y-num` is given, outputs the negation of
-// `$x-num` instead (in other words, `- $x-num` is equivalent to `- 0 $x-num`).
-//
-// This command is [exactness-preserving](#exactness-preserving).
-//
-// Examples:
-//
-// ```elvish-transcript
-// ~> - 5
-// ▶ (num -5)
-// ~> - 5 2
-// ▶ (num 3)
-// ~> - 5 2 7
-// ▶ (num -4)
-// ~> - 1/2 1/3
-// ▶ (num 1/6)
-// ~> - 1/2 0.3
-// ▶ (num 0.2)
-// ~> - 10
-// ▶ (num -10)
-// ```
 
 func sub(rawNums ...vals.Num) (vals.Num, error) {
 	if len(rawNums) == 0 {
@@ -385,29 +209,6 @@ func sub(rawNums ...vals.Num) (vals.Num, error) {
 	}
 }
 
-//elvdoc:fn * {#mul}
-//
-// ```elvish
-// * $num...
-// ```
-//
-// Outputs the product of all arguments, or 1 when there are no arguments.
-//
-// This command is [exactness-preserving](#exactness-preserving). Additionally,
-// when any argument is exact 0 and no other argument is a floating-point
-// infinity, the result is exact 0.
-//
-// Examples:
-//
-// ```elvish-transcript
-// ~> * 2 5 7
-// ▶ (num 70)
-// ~> * 1/2 0.5
-// ▶ (num 0.25)
-// ~> * 0 0.5
-// ▶ (num 0)
-// ```
-
 func mul(rawNums ...vals.Num) vals.Num {
 	hasExact0 := false
 	hasInf := false
@@ -448,48 +249,6 @@ func mul(rawNums ...vals.Num) vals.Num {
 		panic("unreachable")
 	}
 }
-
-//elvdoc:fn / {#div}
-//
-// ```elvish
-// / $x-num $y-num...
-// ```
-//
-// Outputs the result of dividing `$x-num` with all the `$y-num`s, working from
-// left to right. When no `$y-num` is given, outputs the reciprocal of `$x-num`
-// instead (in other words, `/ $y-num` is equivalent to `/ 1 $y-num`).
-//
-// Dividing by exact 0 raises an exception. Dividing by inexact 0 results with
-// either infinity or NaN according to floating-point semantics.
-//
-// This command is [exactness-preserving](#exactness-preserving). Additionally,
-// when `$x-num` is exact 0 and no `$y-num` is exact 0, the result is exact 0.
-//
-// Examples:
-//
-// ```elvish-transcript
-// ~> / 2
-// ▶ (num 1/2)
-// ~> / 2.0
-// ▶ (num 0.5)
-// ~> / 10 5
-// ▶ (num 2)
-// ~> / 2 5
-// ▶ (num 2/5)
-// ~> / 2 5 7
-// ▶ (num 2/35)
-// ~> / 0 1.0
-// ▶ (num 0)
-// ~> / 2 0
-// Exception: bad value: divisor must be number other than exact 0, but is exact 0
-// [tty 6], line 1: / 2 0
-// ~> / 2 0.0
-// ▶ (num +Inf)
-// ```
-//
-// When given no argument, this command is equivalent to `cd /`, due to the
-// implicit cd feature. (The implicit cd feature will probably change to avoid
-// this oddity).
 
 func slash(fm *Frame, args ...vals.Num) error {
 	if len(args) == 0 {
@@ -544,27 +303,6 @@ func div(rawNums ...vals.Num) (vals.Num, error) {
 	}
 }
 
-//elvdoc:fn % {#rem}
-//
-// ```elvish
-// % $x $y
-// ```
-//
-// Output the remainder after dividing `$x` by `$y`. The result has the same
-// sign as `$x`. Both must be integers that can represented in a machine word
-// (this limit may be lifted in future).
-//
-// Examples:
-//
-// ```elvish-transcript
-// ~> % 10 3
-// ▶ 1
-// ~> % -10 3
-// ▶ -1
-// ~> % 10 -3
-// ▶ 1
-// ```
-
 func rem(a, b int) (int, error) {
 	// TODO: Support other number types
 	if b == 0 {
@@ -573,24 +311,178 @@ func rem(a, b int) (int, error) {
 	return a % b, nil
 }
 
-//elvdoc:fn randint
-//
-// ```elvish
-// randint $low $high
-// ```
-//
-// Output a pseudo-random integer in the interval [$low, $high). Example:
-//
-// ```elvish-transcript
-// ~> # Emulate dice
-// randint 1 7
-// ▶ 6
-// ```
-
-func randint(low, high int) (int, error) {
+func randint(args ...int) (int, error) {
+	var low, high int
+	switch len(args) {
+	case 1:
+		low, high = 0, args[0]
+	case 2:
+		low, high = args[0], args[1]
+	default:
+		return -1, errs.ArityMismatch{What: "arguments",
+			ValidLow: 1, ValidHigh: 2, Actual: len(args)}
+	}
 	if high <= low {
 		return 0, errs.BadValue{What: "high value",
 			Valid: fmt.Sprint("larger than ", low), Actual: strconv.Itoa(high)}
 	}
 	return low + rand.Intn(high-low), nil
+}
+
+//lint:ignore SA1019 useful for getting deterministic behavior in Elvish code.
+func randseed(x int) { rand.Seed(int64(x)) }
+
+type rangeOpts struct{ Step vals.Num }
+
+// TODO: The default value can only be used implicitly; passing "range
+// &step=nil" results in an error.
+func (o *rangeOpts) SetDefaultOptions() { o.Step = nil }
+
+func rangeFn(fm *Frame, opts rangeOpts, args ...vals.Num) error {
+	var rawNums []vals.Num
+	switch len(args) {
+	case 1:
+		rawNums = []vals.Num{0, args[0]}
+	case 2:
+		rawNums = []vals.Num{args[0], args[1]}
+	default:
+		return errs.ArityMismatch{What: "arguments", ValidLow: 1, ValidHigh: 2, Actual: len(args)}
+	}
+	if opts.Step != nil {
+		rawNums = append(rawNums, opts.Step)
+	}
+	nums := vals.UnifyNums(rawNums, vals.Int)
+
+	out := fm.ValueOutput()
+
+	switch nums := nums.(type) {
+	case []int:
+		return rangeBuiltinNum(nums, out)
+	case []*big.Int:
+		return rangeBigNum(nums, out, bigIntDesc)
+	case []*big.Rat:
+		return rangeBigNum(nums, out, bigRatDesc)
+	case []float64:
+		return rangeBuiltinNum(nums, out)
+	default:
+		panic("unreachable")
+	}
+}
+
+type builtinNum interface{ int | float64 }
+
+func rangeBuiltinNum[T builtinNum](nums []T, out ValueOutput) error {
+	start, end := nums[0], nums[1]
+	var step T
+	if start <= end {
+		if len(nums) == 3 {
+			step = nums[2]
+			if step <= 0 {
+				return errs.BadValue{
+					What: "step", Valid: "positive", Actual: vals.ToString(step)}
+			}
+		} else {
+			step = 1
+		}
+		for cur := start; cur < end; cur += step {
+			err := out.Put(vals.FromGo(cur))
+			if err != nil {
+				return err
+			}
+			if cur+step <= cur {
+				break
+			}
+		}
+	} else {
+		if len(nums) == 3 {
+			step = nums[2]
+			if step >= 0 {
+				return errs.BadValue{
+					What: "step", Valid: "negative", Actual: vals.ToString(step)}
+			}
+		} else {
+			step = -1
+		}
+		for cur := start; cur > end; cur += step {
+			err := out.Put(vals.FromGo(cur))
+			if err != nil {
+				return err
+			}
+			if cur+step >= cur {
+				break
+			}
+		}
+	}
+	return nil
+}
+
+type bigNum[T any] interface {
+	Cmp(T) int
+	Sign() int
+	Add(T, T) T
+}
+
+type bigNumDesc[T any] struct {
+	one     T
+	negOne  T
+	newZero func() T
+}
+
+var bigIntDesc = bigNumDesc[*big.Int]{
+	one:     big.NewInt(1),
+	negOne:  big.NewInt(-1),
+	newZero: func() *big.Int { return &big.Int{} },
+}
+
+var bigRatDesc = bigNumDesc[*big.Rat]{
+	one:     big.NewRat(1, 1),
+	negOne:  big.NewRat(-1, 1),
+	newZero: func() *big.Rat { return &big.Rat{} },
+}
+
+func rangeBigNum[T bigNum[T]](nums []T, out ValueOutput, d bigNumDesc[T]) error {
+	start, end := nums[0], nums[1]
+	var step T
+	if start.Cmp(end) <= 0 {
+		if len(nums) == 3 {
+			step = nums[2]
+			if step.Sign() <= 0 {
+				return errs.BadValue{
+					What: "step", Valid: "positive", Actual: vals.ToString(step)}
+			}
+		} else {
+			step = d.one
+		}
+		var cur, next T
+		for cur = start; cur.Cmp(end) < 0; cur = next {
+			err := out.Put(vals.FromGo(cur))
+			if err != nil {
+				return err
+			}
+			next = d.newZero()
+			next.Add(cur, step)
+			cur = next
+		}
+	} else {
+		if len(nums) == 3 {
+			step = nums[2]
+			if step.Sign() >= 0 {
+				return errs.BadValue{
+					What: "step", Valid: "negative", Actual: vals.ToString(step)}
+			}
+		} else {
+			step = d.negOne
+		}
+		var cur, next T
+		for cur = start; cur.Cmp(end) > 0; cur = next {
+			err := out.Put(vals.FromGo(cur))
+			if err != nil {
+				return err
+			}
+			next = d.newZero()
+			next.Add(cur, step)
+			cur = next
+		}
+	}
+	return nil
 }

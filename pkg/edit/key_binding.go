@@ -11,7 +11,6 @@ import (
 	"src.elv.sh/pkg/eval"
 	"src.elv.sh/pkg/eval/vals"
 	"src.elv.sh/pkg/eval/vars"
-	"src.elv.sh/pkg/parse"
 	"src.elv.sh/pkg/ui"
 )
 
@@ -51,16 +50,14 @@ func indexLayeredBindings(k ui.Key, maps ...bindingsMap) eval.Callable {
 		}
 	}
 	for _, m := range maps {
-		if m.HasKey(ui.Default) {
-			return m.GetKey(ui.Default)
+		if m.HasKey(ui.DefaultKey) {
+			return m.GetKey(ui.DefaultKey)
 		}
 	}
 	return nil
 }
 
-var bindingSource = parse.Source{Name: "[editor binding]"}
-
-func callWithNotifyPorts(nt notifier, ev *eval.Evaler, f eval.Callable, args ...interface{}) {
+func callWithNotifyPorts(nt notifier, ev *eval.Evaler, f eval.Callable, args ...any) {
 	notifyPort, cleanup := makeNotifyPort(nt)
 	defer cleanup()
 
@@ -73,7 +70,7 @@ func callWithNotifyPorts(nt notifier, ev *eval.Evaler, f eval.Callable, args ...
 }
 
 func makeNotifyPort(nt notifier) (*eval.Port, func()) {
-	ch := make(chan interface{})
+	ch := make(chan any)
 	r, w, err := os.Pipe()
 	if err != nil {
 		panic(err)
@@ -83,7 +80,7 @@ func makeNotifyPort(nt notifier) (*eval.Port, func()) {
 	go func() {
 		// Relay value outputs
 		for v := range ch {
-			nt.notifyf("[value out] %s", vals.Repr(v, vals.NoPretty))
+			nt.notifyf("[value out] %s", vals.ReprPlain(v))
 		}
 		wg.Done()
 	}()

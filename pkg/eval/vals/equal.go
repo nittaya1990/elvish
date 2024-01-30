@@ -3,28 +3,28 @@ package vals
 import (
 	"math/big"
 	"reflect"
+
+	"src.elv.sh/pkg/persistent/hashmap"
 )
 
 // Equaler wraps the Equal method.
 type Equaler interface {
 	// Equal compares the receiver to another value. Two equal values must have
 	// the same hash code.
-	Equal(other interface{}) bool
+	Equal(other any) bool
 }
 
 // Equal returns whether two values are equal. It is implemented for the builtin
 // types bool and string, the File, List, Map types, StructMap types, and types
 // satisfying the Equaler interface. For other types, it uses reflect.DeepEqual
 // to compare the two values.
-func Equal(x, y interface{}) bool {
+func Equal(x, y any) bool {
 	switch x := x.(type) {
 	case nil:
 		return x == y
 	case bool:
 		return x == y
 	case int:
-		return x == y
-	case float64:
 		return x == y
 	case *big.Int:
 		if y, ok := y.(*big.Int); ok {
@@ -36,8 +36,17 @@ func Equal(x, y interface{}) bool {
 			return x.Cmp(y) == 0
 		}
 		return false
+	case float64:
+		return x == y
 	case string:
 		return x == y
+	case List:
+		if yy, ok := y.(List); ok {
+			return equalList(x, yy)
+		}
+		return false
+	// Types above are also handled in [Cmp]; keep the branches in the same
+	// order.
 	case Equaler:
 		return x.Equal(y)
 	case File:
@@ -45,19 +54,20 @@ func Equal(x, y interface{}) bool {
 			return x.Fd() == yy.Fd()
 		}
 		return false
-	case List:
-		if yy, ok := y.(List); ok {
-			return equalList(x, yy)
-		}
-		return false
 	case Map:
-		if yy, ok := y.(Map); ok {
-			return equalMap(x, yy)
+		switch y := y.(type) {
+		case Map:
+			return equalMap(x, y, Map.Iterator, Map.Index)
+		case StructMap:
+			return equalMap(x, y, Map.Iterator, indexStructMap)
 		}
 		return false
 	case StructMap:
-		if yy, ok := y.(StructMap); ok {
-			return equalStructMap(x, yy)
+		switch y := y.(type) {
+		case Map:
+			return equalMap(x, y, iterateStructMap, Map.Index)
+		case StructMap:
+			return equalMap(x, y, iterateStructMap, indexStructMap)
 		}
 		return false
 	default:
@@ -81,33 +91,14 @@ func equalList(x, y List) bool {
 	return true
 }
 
-func equalMap(x, y Map) bool {
-	if x.Len() != y.Len() {
+func equalMap[X, Y any, I hashmap.Iterator](x X, y Y, xit func(X) I, yidx func(Y, any) (any, bool)) bool {
+	if Len(x) != Len(y) {
 		return false
 	}
-	for it := x.Iterator(); it.HasElem(); it.Next() {
+	for it := xit(x); it.HasElem(); it.Next() {
 		k, vx := it.Elem()
-		vy, ok := y.Index(k)
+		vy, ok := yidx(y, k)
 		if !ok || !Equal(vx, vy) {
-			return false
-		}
-	}
-	return true
-}
-
-func equalStructMap(x, y StructMap) bool {
-	t := reflect.TypeOf(x)
-	if t != reflect.TypeOf(y) {
-		return false
-	}
-
-	xValue := reflect.ValueOf(x)
-	yValue := reflect.ValueOf(y)
-	it := iterateStructMap(t)
-	for it.Next() {
-		_, xField := it.Get(xValue)
-		_, yField := it.Get(yValue)
-		if !Equal(xField, yField) {
 			return false
 		}
 	}

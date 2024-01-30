@@ -1,7 +1,6 @@
 package tk
 
 import (
-	"errors"
 	"reflect"
 	"testing"
 
@@ -9,6 +8,8 @@ import (
 	"src.elv.sh/pkg/tt"
 	"src.elv.sh/pkg/ui"
 )
+
+var Args = tt.Args
 
 var bb = term.NewBufferBuilder
 
@@ -81,7 +82,7 @@ var codeAreaRenderTests = []renderTest{
 	{
 		Name: "highlighted code",
 		Given: NewCodeArea(CodeAreaSpec{
-			Highlighter: func(code string) (ui.Text, []error) {
+			Highlighter: func(code string) (ui.Text, []ui.Text) {
 				return ui.T(code, ui.Bold), nil
 			},
 			State: CodeAreaState{Buffer: CodeBuffer{Content: "code", Dot: 4}}}),
@@ -89,17 +90,28 @@ var codeAreaRenderTests = []renderTest{
 		Want: bb(10).WriteStringSGR("code", "1").SetDotHere(),
 	},
 	{
-		Name: "static errors in code",
+		Name: "tips",
 		Given: NewCodeArea(CodeAreaSpec{
 			Prompt: p(ui.T("> ")),
-			Highlighter: func(code string) (ui.Text, []error) {
-				err := errors.New("static error")
-				return ui.T(code), []error{err}
+			Highlighter: func(code string) (ui.Text, []ui.Text) {
+				return ui.T(code), []ui.Text{ui.T("static error")}
 			},
 			State: CodeAreaState{Buffer: CodeBuffer{Content: "code", Dot: 4}}}),
 		Width: 10, Height: 24,
 		Want: bb(10).Write("> code").SetDotHere().
 			Newline().Write("static error"),
+	},
+	{
+		Name: "hiding tips",
+		Given: NewCodeArea(CodeAreaSpec{
+			Prompt: p(ui.T("> ")),
+			Highlighter: func(code string) (ui.Text, []ui.Text) {
+				return ui.T(code), []ui.Text{ui.T("static error")}
+			},
+			State: CodeAreaState{
+				Buffer: CodeBuffer{Content: "code", Dot: 4}, HideTips: true}}),
+		Width: 10, Height: 24,
+		Want: bb(10).Write("> code").SetDotHere(),
 	},
 	{
 		Name: "pending code inserting at the dot",
@@ -274,7 +286,7 @@ var codeAreaHandleTests = []handleTest{
 	{
 		Name: "abbreviation expansion",
 		Given: NewCodeArea(CodeAreaSpec{
-			Abbreviations: func(f func(abbr, full string)) {
+			SimpleAbbreviations: func(f func(abbr, full string)) {
 				f("dn", "/dev/null")
 			},
 		}),
@@ -284,7 +296,7 @@ var codeAreaHandleTests = []handleTest{
 	{
 		Name: "abbreviation expansion 2",
 		Given: NewCodeArea(CodeAreaSpec{
-			Abbreviations: func(f func(abbr, full string)) {
+			SimpleAbbreviations: func(f func(abbr, full string)) {
 				f("||", " | less")
 			},
 		}),
@@ -294,7 +306,7 @@ var codeAreaHandleTests = []handleTest{
 	{
 		Name: "abbreviation expansion after other content",
 		Given: NewCodeArea(CodeAreaSpec{
-			Abbreviations: func(f func(abbr, full string)) {
+			SimpleAbbreviations: func(f func(abbr, full string)) {
 				f("||", " | less")
 			},
 		}),
@@ -304,7 +316,7 @@ var codeAreaHandleTests = []handleTest{
 	{
 		Name: "abbreviation expansion preferring longest",
 		Given: NewCodeArea(CodeAreaSpec{
-			Abbreviations: func(f func(abbr, full string)) {
+			SimpleAbbreviations: func(f func(abbr, full string)) {
 				f("n", "none")
 				f("dn", "/dev/null")
 			},
@@ -315,7 +327,7 @@ var codeAreaHandleTests = []handleTest{
 	{
 		Name: "abbreviation expansion interrupted by function key",
 		Given: NewCodeArea(CodeAreaSpec{
-			Abbreviations: func(f func(abbr, full string)) {
+			SimpleAbbreviations: func(f func(abbr, full string)) {
 				f("dn", "/dev/null")
 			},
 		}),
@@ -364,6 +376,47 @@ var codeAreaHandleTests = []handleTest{
 		WantNewState: CodeAreaState{Buffer: CodeBuffer{Content: "gh ", Dot: 3}},
 	},
 	{
+		Name: "command abbreviation expansion",
+		Given: NewCodeArea(CodeAreaSpec{
+			CommandAbbreviations: func(f func(abbr, full string)) {
+				f("eh", "echo hello")
+			},
+		}),
+		Events:       []term.Event{term.K('e'), term.K('h'), term.K(' ')},
+		WantNewState: CodeAreaState{Buffer: CodeBuffer{Content: "echo hello ", Dot: 11}},
+	},
+	{
+		Name: "command abbreviation expansion not at start of line",
+		Given: NewCodeArea(CodeAreaSpec{
+			CommandAbbreviations: func(f func(abbr, full string)) {
+				f("eh", "echo hello")
+			},
+		}),
+		Events:       []term.Event{term.K('x'), term.K('|'), term.K('e'), term.K('h'), term.K(' ')},
+		WantNewState: CodeAreaState{Buffer: CodeBuffer{Content: "x|echo hello ", Dot: 13}},
+	},
+	{
+		Name: "command abbreviation expansion at start of second line",
+		Given: NewCodeArea(CodeAreaSpec{
+			CommandAbbreviations: func(f func(abbr, full string)) {
+				f("eh", "echo hello")
+			},
+			State: CodeAreaState{Buffer: CodeBuffer{Content: "echo\n", Dot: 5}},
+		}),
+		Events:       []term.Event{term.K('e'), term.K('h'), term.K(' ')},
+		WantNewState: CodeAreaState{Buffer: CodeBuffer{Content: "echo\necho hello ", Dot: 16}},
+	},
+	{
+		Name: "no command abbreviation expansion when not in command position",
+		Given: NewCodeArea(CodeAreaSpec{
+			CommandAbbreviations: func(f func(abbr, full string)) {
+				f("eh", "echo hello")
+			},
+		}),
+		Events:       []term.Event{term.K('x'), term.K(' '), term.K('e'), term.K('h'), term.K(' ')},
+		WantNewState: CodeAreaState{Buffer: CodeBuffer{Content: "x eh ", Dot: 5}},
+	},
+	{
 		Name: "key bindings",
 		Given: NewCodeArea(CodeAreaSpec{Bindings: MapBindings{
 			term.K('a'): func(w Widget) {
@@ -409,7 +462,7 @@ func TestCodeArea_Handle_UnhandledEvents(t *testing.T) {
 
 func TestCodeArea_Handle_AbbreviationExpansionInterruptedByExternalMutation(t *testing.T) {
 	w := NewCodeArea(CodeAreaSpec{
-		Abbreviations: func(f func(abbr, full string)) {
+		SimpleAbbreviations: func(f func(abbr, full string)) {
 			f("dn", "/dev/null")
 		},
 	})
@@ -453,16 +506,16 @@ func TestCodeAreaState_ApplyPending(t *testing.T) {
 		s.ApplyPending()
 		return s
 	}
-	tt.Test(t, tt.Fn("applyPending", applyPending), tt.Table{
-		tt.Args(CodeAreaState{Buffer: CodeBuffer{}, Pending: PendingCode{0, 0, "ls"}}).
+	tt.Test(t, applyPending,
+		Args(CodeAreaState{Buffer: CodeBuffer{}, Pending: PendingCode{0, 0, "ls"}}).
 			Rets(CodeAreaState{Buffer: CodeBuffer{Content: "ls", Dot: 2}, Pending: PendingCode{}}),
-		tt.Args(CodeAreaState{Buffer: CodeBuffer{"x", 1}, Pending: PendingCode{0, 0, "ls"}}).
+		Args(CodeAreaState{Buffer: CodeBuffer{"x", 1}, Pending: PendingCode{0, 0, "ls"}}).
 			Rets(CodeAreaState{Buffer: CodeBuffer{Content: "lsx", Dot: 3}, Pending: PendingCode{}}),
 		// No-op when Pending is empty.
-		tt.Args(CodeAreaState{Buffer: CodeBuffer{"x", 1}}).
+		Args(CodeAreaState{Buffer: CodeBuffer{"x", 1}}).
 			Rets(CodeAreaState{Buffer: CodeBuffer{Content: "x", Dot: 1}}),
 		// HideRPrompt is kept intact.
-		tt.Args(CodeAreaState{Buffer: CodeBuffer{"x", 1}, HideRPrompt: true}).
+		Args(CodeAreaState{Buffer: CodeBuffer{"x", 1}, HideRPrompt: true}).
 			Rets(CodeAreaState{Buffer: CodeBuffer{Content: "x", Dot: 1}, HideRPrompt: true}),
-	})
+	)
 }

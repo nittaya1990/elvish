@@ -23,9 +23,9 @@ var minIntString = strconv.Itoa(minInt)
 
 func TestMath(t *testing.T) {
 	setup := func(ev *eval.Evaler) {
-		ev.AddGlobal(eval.NsBuilder{}.AddNs("math", Ns).Ns())
+		ev.ExtendGlobal(eval.BuildNs().AddNs("math", Ns))
 	}
-	TestWithSetup(t, setup,
+	TestWithEvalerSetup(t, setup,
 		That("math:abs 2").Puts(2),
 		That("math:abs -2").Puts(2),
 		That("math:abs "+minIntString).Puts(bigInt(minIntString[1:])),
@@ -146,10 +146,6 @@ func TestMath(t *testing.T) {
 		// base is float64
 		That("math:pow 2.0 2").Puts(4.0),
 
-		That("math:pow10 0").Puts(1),
-		That("math:pow10 3").Puts(1000),
-		That("math:pow10 -3").Puts(big.NewRat(1, 1000)),
-
 		// Tests below this line are tests against simple bindings for Go's math package.
 
 		That("put $math:pi").Puts(math.Pi),
@@ -159,8 +155,8 @@ func TestMath(t *testing.T) {
 		That("math:trunc -2.1").Puts(-2.0),
 		That("math:trunc 2.5").Puts(2.0),
 		That("math:trunc -2.5").Puts(-2.0),
-		That("math:trunc (float64 Inf)").Puts(math.Inf(1)),
-		That("math:trunc (float64 NaN)").Puts(math.NaN()),
+		That("math:trunc (num Inf)").Puts(math.Inf(1)),
+		That("math:trunc (num NaN)").Puts(math.NaN()),
 
 		That("math:log $math:e").Puts(1.0),
 		That("math:log 1").Puts(0.0),
@@ -208,11 +204,11 @@ func TestMath(t *testing.T) {
 		//    math.Tan(math.Pi) == math.Tan(math.Pi)
 		// are true. The ops that should return a zero value do not actually
 		// do so. Which illustrates why an approximate match is needed.
-		That("math:cos 1").Puts(Approximately{F: 0.5403023058681397174}),
-		That("math:sin 1").Puts(Approximately{F: 0.8414709848078965066}),
-		That("math:sin $math:pi").Puts(Approximately{F: 0.0}),
-		That("math:tan 1").Puts(Approximately{F: 1.5574077246549023}),
-		That("math:tan $math:pi").Puts(Approximately{F: 0.0}),
+		That("math:cos 1").Puts(Approximately(0.5403023058681397174)),
+		That("math:sin 1").Puts(Approximately(0.8414709848078965066)),
+		That("math:sin $math:pi").Puts(Approximately(0.0)),
+		That("math:tan 1").Puts(Approximately(1.5574077246549023)),
+		That("math:tan $math:pi").Puts(Approximately(0.0)),
 
 		That("math:sqrt 0").Puts(0.0),
 		That("math:sqrt 4").Puts(2.0),

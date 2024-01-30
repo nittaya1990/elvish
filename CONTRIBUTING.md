@@ -2,20 +2,87 @@
 
 ## Human communication
 
-The project lead is @xiaq, who is reachable in the user group most of the time.
-
-If you intend to make user-visible changes to Elvish's behavior, it is good idea
-to talk to him first; this will make it easier to review your changes.
+The only person with direct commit access is the project's founder @xiaq. If you
+intend to make user-visible changes to Elvish's behavior (as opposed to fixing
+typos and obvious bugs), it is good idea to talk to him first; this will make it
+easier to review your changes. He should be reachable in the user group most of
+the time.
 
 On the other hand, if you find it easier to express your thoughts directly in
 code, it is also completely fine to directly send a pull request, as long as you
 don't mind the risk of the PR being rejected due to lack of prior discussion.
 
+## Development workflows
+
+The [`Makefile`](Makefile) encapsulates common development workflows:
+
+-   Use `make fmt` to [format files](#formatting-files).
+
+-   Use `make test` to [run tests](#testing-changes).
+
+-   Use `make all-checks` or `make most-checks` to
+    [run checks](#running-checks).
+
+You can use the [`tools/pre-push`](tools/pre-push) script as a Git hook, which
+runs all the tests and checks (`make test all-checks`), among other things.
+
+The same tests and checks are also run by Elvish's CI environments, so running
+them locally before pushing minimizes the chance of CI errors. (The CI
+environments run the tests on multiple platforms, so CI errors can still happen
+if you break some tests for a different platform.)
+
+## Formatting files
+
+Use `make fmt` to format Go and Markdown files in the repo.
+
+### Formatting Go files on save
+
+The Go plugins of most popular editors already support formatting Go files
+automatically on save; consult the documentation of the plugin you use.
+
+### Formatting Markdown files on save
+
+The Markdown formatter is [`cmd/elvmdfmt`](cmd/elvmdfmt), which lives inside
+this repo. Run it like this:
+
+```sh
+go run src.elv.sh/cmd/elvmdfmt -width 80 -w $filename
+```
+
+To format Markdown files automatically on save, configure your editor to run the
+command above when saving Markdown files. You'll also want to configure this
+command to only run inside the Elvish repo, since `elvmdfmt` is tailored to
+Markdown files in this repo and may not work well for other Markdown files.
+
+If you use VS Code, install the
+[Run on Save](https://marketplace.visualstudio.com/items?itemName=emeraldwalk.RunOnSave)
+extension and add the following to the workspace (**not** user) `settings.json`
+file:
+
+```json
+"emeraldwalk.runonsave": {
+    "commands": [
+        {
+            "match": "\\.md$",
+            "cmd": "go run src.elv.sh/cmd/elvmdfmt -width 80 -w ${file}"
+        }
+    ]
+}
+```
+
+**Note**: Using `go run` ensures that you are always using the `elvmdfmt`
+implementation in the repo, but it incurs a small performance penalty since the
+Go toolchain does not cache binary files and has to rebuild it every time. If
+this is a problem (for example, if your editor runs the command synchronously),
+you can speed up the command by installing `src.elv.sh/cmd/elvmdfmt` and using
+the installed `elvmdfmt`. However, if you do this, you must re-install
+`elvmdfmt` whenever there is a change in its implementation that impacts the
+output.
+
 ## Testing changes
 
 Write comprehensive unit tests for your code, and make sure that existing tests
-are passing. Tests are run on CI automatically for PRs; you can also run
-`make test` in the repo root yourself.
+are passing. Run tests with `make test`.
 
 Respect established patterns of how unit tests are written. Some packages
 unfortunately have competing patterns, which usually reflects a still-evolving
@@ -46,65 +113,50 @@ appropriate section. You can find the document at the root of the repo (called
 
 ### Reference docs
 
-Reference docs are interspersed in Go sources as comments blocks whose first
-line starts with `//elvdoc` (and are hence called _elvdocs_). They can use
-[Github Flavored Markdown](https://github.github.com/gfm/).
+Reference docs are written as "elvdocs", comment blocks before unindented `fn`
+or `var` declarations in Elvish files. A
+[large subset](https://pkg.go.dev/src.elv.sh/pkg/md@master) of
+[CommonMark](https://commonmark.org) is supported. Examples:
 
-Elvdocs for functions look like the following:
+````elvish
+# Does something.
+#
+# Examples:
+#
+# ```elvish-transcript
+# ~> foo
+# some output
+# ```
+fn foo {|a b c| }
 
-````go
-//elvdoc:fn name-of-fn
-//
-// ```elvish
-// name-of-fn $arg &opt=default
-// ```
-//
-// Does something.
-//
-// Example:
-//
-// ```elvish-transcript
-// ~> name-of-fn something
-// ▶ some-value-output
-// ```
-
-func nameOfFn() { ... }
+# Some variable.
+var bar
 ````
 
-Generally, elvdocs for functions have the following structure:
+Most of Elvish's builtin modules are implemented in Go, not Elvish. For those
+modules, put dummy declarations in `.d.elv` files (`d` for "declaration"). For
+example, elvdocs for functions implemented in `builtin_fn_num.go` go in
+`builtin_fn_num.d.elv`.
 
--   A line starting with `//elvdoc:fn`, followed by the name of the function.
-    Note that there should be no space after `//`, unlike all the other lines.
+For a comment block to be considered an elvdoc, it has to be continuous, and
+each line should either be just `#` or start with `#` and a space.
 
--   An `elvish` code block describing the signature of the function, following
-    the convention [here](website/ref/builtin.md#usage-notation).
+Style guides for elvdocs for functions:
 
--   Description of the function, which can be one or more paragraphs. The first
-    sentence of the description should start with a verb in 3rd person singular
-    (i.e. ending with a "s"), as if there is an implicit subject "this
-    function".
+-   The first sentence should start with a verb in 3rd person singular (i.e.
+    ending with a "s"), as if there is an implicit subject "this function".
 
--   One or more `elvish-transcript` code blocks showing example usages, which
-    are transcripts of actual REPL input and output. Transcripts must use the
-    default prompt `~>` and default value output indicator `▶`. You can use
-    `elvish -norc` if you have customized either in your `rc.elv`.
+-   The end of the elvdoc should show or more `elvish-transcript` code blocks
+    showing example usages, which are transcripts of actual REPL input and
+    output. Transcripts must use the default prompt `~>` and default value
+    output indicator `▶`. You can use `elvish -norc` if you have customized
+    either in your [`rc.elv`](https://elv.sh/ref/command.html#rc-file).
 
-Place the comment block before the implementation of the function. If the
-function has no implementation (e.g. it is a simple wrapper of a function from
-the Go standard library), place it before the top-level declaration of the
-namespace.
-
-Similarly, reference docs for variables start with `//elvdoc:var`:
-
-```go
-//elvdoc:var name-of-var
-//
-// Something.
-```
-
-Variables do not have signatures, and are described using a noun phrase.
-Examples are not always needed; if they are, they can be given in the same
-format as examples for functions.
+It is quite common for elvdocs to link to other elvdocs, and Elvish's website
+toolchain provides special support for that. If a link has a single code span
+and an empty target, it gets rewritten to a link to an elvdoc section. For
+example, ``[`put`]()`` will get rewritten to ``[`put`](builtin.html#put)``, or
+just ``[`put`](#put)`` within the documentation for the builtin module.
 
 ### Comment for unexported Go types and functions
 
@@ -132,62 +184,24 @@ Use the standard command, `go generate ./...` to regenerate all files.
 Some of the generation rules depend on the `stringer` tool. Install with
 `go install golang.org/x/tools/cmd/stringer@latest`.
 
-## Code hygiene
+## Running checks
 
-Some basic aspects of code hygiene are checked in the CI.
+There are some checks on the source code that can be run with `make all-checks`
+or `make most-checks`. The difference is that `all-checks` includes a check
+([`tools/check-gen.sh`](tools/check-gen.sh)) that requires the Git repo to have
+a clean working tree, so may not be convenient to use when you are working on
+the source code. The `most-checks` target excludes that, so can be always be
+used.
 
-### Formatting
+The checks depend on some external programs, which can be installed as follows:
 
-Install [goimports](https://pkg.go.dev/golang.org/x/tools/cmd/goimports) to
-format Go files, and [prettier](https://prettier.io/) to format Markdown files.
+<!-- Keep the versions of staticcheck and codespell in sync with .github/workflows/ci.yml -->
 
 ```sh
 go install golang.org/x/tools/cmd/goimports@latest
-npm install --global prettier@2.3.1
+go install honnef.co/go/tools/cmd/staticcheck@v0.4.6
+pip install --user codespell==2.2.6
 ```
-
-Once you have installed the tools, use `make style` to format Go and Markdown
-files. If you prefer, you can also configure your editor to run these commands
-automatically when saving Go or Markdown sources.
-
-Use `make checkstyle` to check if all Go and Markdown files are properly
-formatted.
-
-### Linting
-
-Install [staticcheck](https://staticcheck.io):
-
-```sh
-go install honnef.co/go/tools/cmd/staticcheck@2021.1
-```
-
-The other linter Elvish uses is the standard `go vet` command. Elvish doesn't
-use golint since it is
-[deprecated and frozen](https://github.com/golang/go/issues/38968).
-
-Use `make lint` to run `staticcheck` and `go vet`.
-
-### Spell checking
-
-Install [codespell](https://github.com/codespell-project/codespell) to check
-spelling:
-
-```sh
-pip install --user codespell==2.1.0
-```
-
-Use `make codespell` to run it.
-
-### Running all checks
-
-Use this command to run all checks:
-
-```sh
-make test checkstyle lint codespell
-```
-
-You can put this in `.git/hooks/pre-push` to ensure that your published commits
-pass all the checks.
 
 ## Licensing
 

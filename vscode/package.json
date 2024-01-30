@@ -1,0 +1,111 @@
+{
+    "name": "elvish",
+    "displayName": "Elvish",
+    "description": "Elvish language support for Visual Studio Code",
+    "version": "0.2.3",
+    "publisher": "elves",
+    "license": "BSD-2-Clause",
+    "icon": "icon.png",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/elves/elvish"
+    },
+    "engines": {
+        "vscode": "^1.65.0"
+    },
+    "categories": [
+        "Programming Languages",
+        "Snippets"
+    ],
+    "activationEvents": [],
+    "main": "./dist/extension.js",
+    "contributes": {
+        "languages": [
+            {
+                "id": "elvish",
+                "aliases": [
+                    "Elvish",
+                    "elvish"
+                ],
+                "extensions": [
+                    ".elv"
+                ],
+                "configuration": "./language-configuration.json"
+            },
+            {
+                "id": "elvish-transcript",
+                "aliases": [
+                    "Elvish transcript",
+                    "elvish transcript"
+                ],
+                "extensions": [
+                    ".elvts"
+                ]
+            },
+            {
+                "id": "elvish-in-markdown",
+                "aliases": [
+                    "Elvish in Markdown"
+                ]
+            }
+        ],
+        "grammars": [
+            {
+                "language": "elvish",
+                "scopeName": "source.elvish",
+                "path": "./syntaxes/elvish.tmLanguage.json"
+            },
+            {
+                "language": "elvish-transcript",
+                "scopeName": "source.elvish-transcript",
+                "path": "./syntaxes/elvish-transcript.tmLanguage.json",
+                "embeddedLanguages": {
+                    "meta.embedded.block.elvish": "elvish"
+                }
+            },
+            {
+                "language": "elvish-in-markdown",
+                "scopeName": "source.elvish.in.markdown",
+                "path": "./syntaxes/elvish-in-markdown.tmLanguage.json",
+                "injectTo": [
+                    "text.html.markdown"
+                ],
+                "embeddedLanguages": {
+                    "meta.embedded.block.elvish": "elvish",
+                    "meta.embedded.block.elvish-transcript": "elvish-transcript"
+                }
+            }
+        ],
+        "configuration": {
+            "title": "Elvish",
+            "properties": {
+                "elvish.trace.server": {
+                    "type": "string",
+                    "enum": [
+                        "off",
+                        "messages",
+                        "verbose"
+                    ],
+                    "default": "off",
+                    "description": "Trace communication between VS Code and the Elvish language server. Trace messages are shown in the Elvish Language Server output channel."
+                }
+            }
+        },
+        "snippets": [
+            {
+                "language": "elvish",
+                "path": "./snippets/snippets.json"
+            }
+        ]
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run build",
+        "build": "esbuild ./extension.js --bundle --outfile=./dist/extension.js --external:vscode --format=cjs --platform=node --minify --sourcemap"
+    },
+    "dependencies": {
+        "vscode-languageclient": "^8.1.0"
+    },
+    "devDependencies": {
+        "esbuild": "^0.18.12"
+    }
+}

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"src.elv.sh/pkg/env"
+	"src.elv.sh/pkg/must"
 )
 
 // TempDir creates a temporary directory for testing that will be removed
@@ -44,9 +45,9 @@ func Chdir(c Cleanuper, dir string) string {
 	if err != nil {
 		panic(err)
 	}
-	Must(os.Chdir(dir))
+	must.Chdir(dir)
 	c.Cleanup(func() {
-		Must(os.Chdir(oldWd))
+		must.Chdir(oldWd)
 	})
 	return dir
 }
@@ -64,7 +65,7 @@ func InTempHome(c Cleanuper) string {
 // Dir describes the layout of a directory. The keys of the map represent
 // filenames. Each value is either a string (for the content of a regular file
 // with permission 0644), a File, or a Dir.
-type Dir map[string]interface{}
+type Dir map[string]any
 
 // File describes a file to create.
 type File struct {
@@ -74,20 +75,21 @@ type File struct {
 
 // ApplyDir creates the given filesystem layout in the current directory.
 func ApplyDir(dir Dir) {
-	applyDir(dir, "")
+	ApplyDirIn(dir, "")
 }
 
-func applyDir(dir Dir, prefix string) {
+// ApplyDirIn creates the given filesystem layout in a given directory.
+func ApplyDirIn(dir Dir, root string) {
 	for name, file := range dir {
-		path := filepath.Join(prefix, name)
+		path := filepath.Join(root, name)
 		switch file := file.(type) {
 		case string:
-			Must(os.WriteFile(path, []byte(file), 0644))
+			must.OK(os.WriteFile(path, []byte(file), 0644))
 		case File:
-			Must(os.WriteFile(path, []byte(file.Content), file.Perm))
+			must.OK(os.WriteFile(path, []byte(file.Content), file.Perm))
 		case Dir:
-			Must(os.MkdirAll(path, 0755))
-			applyDir(file, path)
+			must.OK(os.MkdirAll(path, 0755))
+			ApplyDirIn(file, path)
 		default:
 			panic(fmt.Sprintf("file is neither string, Dir, or Symlink: %v", file))
 		}

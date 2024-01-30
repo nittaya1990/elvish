@@ -1,0 +1,106 @@
+name: Check website
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  check_freshness:
+    name: Check freshness
+    if: github.repository == 'elves/elvish'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        host: [cdg, hkg]
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    - name: Compare timestamp
+      timeout-minutes: 30
+      run: |
+        ts=$(git show -s --format=%ct HEAD)
+        wait=10
+        while true; do
+          website_ts=$(curl -sS https://${{ matrix.host }}.elv.sh/commit-ts.txt)
+          if test -z "$website_ts"; then
+            echo "website has no commit-ts.txt yet"
+          elif test "$website_ts" -ge "$ts"; then
+            echo "website ($website_ts) >= current ($ts)"
+            exit 0
+          else
+            echo "website ($website_ts) < current ($ts)"
+          fi
+          sleep $wait
+          test $wait -lt 96 && wait=`echo "$wait * 2" | bc`
+        done
+
+  build_binaries:
+    name: Build binaries
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    - name: Set up cache
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/go/pkg/mod
+          ~/.cache/go-build
+        key: buildall/${{ hashFiles('go.sum') }}/${{ github.sha }}
+        restore-keys: buildall/${{ hashFiles('go.sum') }}
+    - name: Set up Go
+      uses: actions/setup-go@v3
+      with:
+        # Keep this in sync with
+        # https://github.com/elves/up/blob/master/Dockerfile
+        go-version: 1.21.6
+    - name: Build binaries
+      run: ELVISH_BUILD_VARIANT=official ./tools/buildall.sh . ~/elvish-bin HEAD
+    - name: Upload binaries
+      uses: actions/upload-artifact@v3
+      with:
+        name: bin
+        path: ~/elvish-bin/**/*
+        retention-days: 7
+    - name: Upload binary checksums
+      uses: actions/upload-artifact@v3
+      with:
+        name: bin-checksums
+        path: ~/elvish-bin/**/elvish-HEAD.sha256sum
+
+  check_binary_checksums:
+    name: Check binary checksums
+    needs: [check_freshness, build_binaries]
+    strategy:
+      matrix:
+        host: [cdg, hkg]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download binary checksums
+      uses: actions/download-artifact@v3
+      with:
+        name: bin-checksums
+        path: elvish-bin
+    - name: Check binary checksums
+      working-directory: elvish-bin
+      run: |
+        ret=0
+        for f in */elvish-HEAD.sha256sum; do
+          website_sum=$(curl -sS https://${{ matrix.host }}.dl.elv.sh/$f | awk '{print $1}')
+          github_sum=$(cat $f | awk '{print $1}')
+          if test "$website_sum" = "$github_sum"; then
+            echo "$f: website == github ($github_sum)"
+          else
+            echo "$f: website ($website_sum) != github ($github_sum)"
+            ret=1
+          fi
+        done
+        if test $ret != 0; then
+          latest_sha=$(curl -sS -H 'Authorization: token ${{ secrets.GITHUB_TOKEN }}' -H 'Accept: application/vnd.github.VERSION.sha' https://api.github.com/repos/elves/elvish/commits/master)
+          if test ${{ github.sha }} != "$latest_sha"; then
+            echo "Ignoring the mismatch since there is a newer commit now"
+            ret=0
+          fi
+        fi
+        exit $ret

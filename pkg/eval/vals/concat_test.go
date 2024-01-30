@@ -5,7 +5,7 @@ import (
 	"math/big"
 	"testing"
 
-	. "src.elv.sh/pkg/tt"
+	"src.elv.sh/pkg/tt"
 )
 
 // An implementation for Concatter that accepts strings, returns a special
@@ -15,7 +15,7 @@ type concatter struct{}
 
 var errBadFloat64 = errors.New("float64 is bad")
 
-func (concatter) Concat(rhs interface{}) (interface{}, error) {
+func (concatter) Concat(rhs any) (any, error) {
 	switch rhs := rhs.(type) {
 	case string:
 		return "concatter " + rhs, nil
@@ -29,12 +29,12 @@ func (concatter) Concat(rhs interface{}) (interface{}, error) {
 // An implementation of RConcatter that accepts all types.
 type rconcatter struct{}
 
-func (rconcatter) RConcat(lhs interface{}) (interface{}, error) {
+func (rconcatter) RConcat(lhs any) (any, error) {
 	return "rconcatter", nil
 }
 
 func TestConcat(t *testing.T) {
-	Test(t, Fn("Concat", Concat), Table{
+	tt.Test(t, Concat,
 		Args("foo", "bar").Rets("foobar", nil),
 		// string+number
 		Args("foo", 2).Rets("foo2", nil),
@@ -57,5 +57,5 @@ func TestConcat(t *testing.T) {
 
 		// LHS does not implement Concatter but RHS implements RConcatter
 		Args(12, rconcatter{}).Rets("rconcatter", nil),
-	})
+	)
 }

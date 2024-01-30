@@ -4,15 +4,14 @@ import (
 	"os"
 
 	"golang.org/x/sys/windows"
-	"src.elv.sh/pkg/diag"
+	"src.elv.sh/pkg/errutil"
 )
 
 const (
-	wantedInMode = windows.ENABLE_WINDOW_INPUT |
+	inMode = windows.ENABLE_WINDOW_INPUT |
 		windows.ENABLE_MOUSE_INPUT | windows.ENABLE_PROCESSED_INPUT
-	wantedOutMode = windows.ENABLE_PROCESSED_OUTPUT |
-		windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING
-	wantedGlobalOutMode = windows.ENABLE_PROCESSED_OUTPUT |
+	outMode = windows.ENABLE_PROCESSED_OUTPUT |
+		windows.ENABLE_WRAP_AT_EOL_OUTPUT |
 		windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING
 )
 
@@ -30,30 +29,26 @@ func setup(in, out *os.File) (func() error, error) {
 		return nil, err
 	}
 
-	errSetIn := windows.SetConsoleMode(hIn, wantedInMode)
-	errSetOut := windows.SetConsoleMode(hOut, wantedOutMode)
+	errSetIn := windows.SetConsoleMode(hIn, inMode)
+	errSetOut := windows.SetConsoleMode(hOut, outMode)
 	errVT := setupVT(out)
 
 	return func() error {
-		return diag.Errors(
+		return errutil.Multi(
 			restoreVT(out),
 			windows.SetConsoleMode(hOut, oldOutMode),
 			windows.SetConsoleMode(hIn, oldInMode))
-	}, diag.Errors(errSetIn, errSetOut, errVT)
+	}, errutil.Multi(errSetIn, errSetOut, errVT)
 }
 
-func setupGlobal() func() {
-	hOut := windows.Handle(os.Stderr.Fd())
+const outFlagForEval = windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING
+
+func setupForEval(_, out *os.File) func() {
+	h := windows.Handle(out.Fd())
 	var oldOutMode uint32
-	err := windows.GetConsoleMode(hOut, &oldOutMode)
-	if err != nil {
-		return func() {}
+	err := windows.GetConsoleMode(h, &oldOutMode)
+	if err == nil {
+		windows.SetConsoleMode(h, oldOutMode|outFlagForEval)
 	}
-	err = windows.SetConsoleMode(hOut, wantedGlobalOutMode)
-	if err != nil {
-		return func() {}
-	}
-	return func() { windows.SetConsoleMode(hOut, oldOutMode) }
+	return func() {}
 }
-
-func sanitize(in, out *os.File) {}

@@ -1,5 +1,4 @@
-//go:build !windows && !plan9
-// +build !windows,!plan9
+//go:build unix
 
 package eval
 
@@ -9,12 +8,13 @@ import (
 	"syscall"
 
 	"src.elv.sh/pkg/sys"
+	"src.elv.sh/pkg/sys/eunix"
 )
 
 // Process control functions in Unix.
 
 func putSelfInFg() error {
-	if !sys.IsATTY(os.Stdin) {
+	if !sys.IsATTY(os.Stdin.Fd()) {
 		return nil
 	}
 	// If Elvish is in the background, the tcsetpgrp call below will either fail
@@ -22,7 +22,7 @@ func putSelfInFg() error {
 	// Ignoring TTOU fixes that.
 	signal.Ignore(syscall.SIGTTOU)
 	defer signal.Reset(syscall.SIGTTOU)
-	return sys.Tcsetpgrp(0, syscall.Getpgrp())
+	return eunix.Tcsetpgrp(0, syscall.Getpgrp())
 }
 
 func makeSysProcAttr(bg bool) *syscall.SysProcAttr {

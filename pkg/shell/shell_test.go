@@ -6,22 +6,100 @@ import (
 	"testing"
 
 	"src.elv.sh/pkg/env"
-	"src.elv.sh/pkg/prog"
+	"src.elv.sh/pkg/must"
 	. "src.elv.sh/pkg/prog/progtest"
-	. "src.elv.sh/pkg/testutil"
+	"src.elv.sh/pkg/testutil"
 )
 
-func TestShell_LegacyLibPath(t *testing.T) {
-	f := setup(t)
-	MustWriteFile(filepath.Join(f.home, ".elvish", "lib", "a.elv"), "echo mod a")
+func TestShell_LibPath_XDGPaths(t *testing.T) {
+	xdgConfigHome := testutil.TempDir(t)
+	testutil.ApplyDirIn(testutil.Dir{
+		"elvish": testutil.Dir{
+			"lib": testutil.Dir{
+				"a.elv": "echo a from xdg-config-home",
+			},
+		},
+	}, xdgConfigHome)
+	testutil.Setenv(t, env.XDG_CONFIG_HOME, xdgConfigHome)
 
-	exit := f.run(Elvish("-c", "use a"))
-	TestExit(t, exit, 0)
-	f.TestOut(t, 1, "mod a\n")
+	xdgDataHome := testutil.TempDir(t)
+	testutil.ApplyDirIn(testutil.Dir{
+		"elvish": testutil.Dir{
+			"lib": testutil.Dir{
+				"a.elv": "echo a from xdg-data-home",
+				"b.elv": "echo b from xdg-data-home",
+			},
+		},
+	}, xdgDataHome)
+	testutil.Setenv(t, env.XDG_DATA_HOME, xdgDataHome)
+
+	xdgDataDir1 := testutil.TempDir(t)
+	testutil.ApplyDirIn(testutil.Dir{
+		"elvish": testutil.Dir{
+			"lib": testutil.Dir{
+				"a.elv": "echo a from xdg-data-dir-1",
+				"b.elv": "echo b from xdg-data-dir-1",
+				"c.elv": "echo c from xdg-data-dir-1",
+			},
+		},
+	}, xdgDataDir1)
+	xdgDataDir2 := testutil.TempDir(t)
+	testutil.ApplyDirIn(testutil.Dir{
+		"elvish": testutil.Dir{
+			"lib": testutil.Dir{
+				"a.elv": "echo a from xdg-data-dir-2",
+				"b.elv": "echo b from xdg-data-dir-2",
+				"c.elv": "echo c from xdg-data-dir-2",
+				"d.elv": "echo d from xdg-data-dir-2",
+			},
+		},
+	}, xdgDataDir2)
+	testutil.Setenv(t, env.XDG_DATA_DIRS,
+		xdgDataDir1+string(filepath.ListSeparator)+xdgDataDir2)
+
+	Test(t, &Program{},
+		ThatElvish("-c", "use a").WritesStdout("a from xdg-config-home\n"),
+		ThatElvish("-c", "use b").WritesStdout("b from xdg-data-home\n"),
+		ThatElvish("-c", "use c").WritesStdout("c from xdg-data-dir-1\n"),
+		ThatElvish("-c", "use d").WritesStdout("d from xdg-data-dir-2\n"),
+	)
+}
+
+func TestShell_LibPath_Legacy(t *testing.T) {
+	home := setupCleanHomePaths(t)
+	must.WriteFile(filepath.Join(home, ".elvish", "lib", "a.elv"), "echo mod a")
+
+	Test(t, &Program{},
+		ThatElvish("-c", "use a").
+			WritesStdout("mod a\n").
+			WritesStderrContaining(legacyLibPathWarning),
+	)
 }
 
 // Most high-level tests against Program are specific to either script mode or
 // interactive mode, and are found in script_test.go and interact_test.go.
+
+var noColorTests = []struct {
+	name       string
+	value      string
+	unset      bool
+	wantRedFoo string
+}{
+	{name: "unset", unset: true, wantRedFoo: "\033[;31mfoo\033[m"},
+	{name: "empty", value: "", wantRedFoo: "\033[;31mfoo\033[m"},
+	{name: "non-empty", value: "yes", wantRedFoo: "\033[mfoo"},
+}
+
+func TestShell_NO_COLOR(t *testing.T) {
+	for _, test := range noColorTests {
+		t.Run(test.name, func(t *testing.T) {
+			setOrUnsetenv(t, env.NO_COLOR, test.unset, test.value)
+			Test(t, &Program{},
+				ThatElvish("-c", "print (styled foo red)").
+					WritesStdout(test.wantRedFoo))
+		})
+	}
+}
 
 var incSHLVLTests = []struct {
 	name    string
@@ -45,24 +123,13 @@ var incSHLVLTests = []struct {
 	{name: "negative", old: "-100", wantNew: "-99"},
 }
 
-func TestIncSHLVL(t *testing.T) {
-	Setenv(t, env.SHLVL, "")
-
+func TestShell_SHLVL(t *testing.T) {
 	for _, test := range incSHLVLTests {
 		t.Run(test.name, func(t *testing.T) {
-			if test.unset {
-				os.Unsetenv(env.SHLVL)
-			} else {
-				os.Setenv(env.SHLVL, test.old)
-			}
+			setOrUnsetenv(t, env.SHLVL, test.unset, test.old)
+			Test(t, &Program{},
+				ThatElvish("-c", "print $E:SHLVL").WritesStdout(test.wantNew))
 
-			restore := IncSHLVL()
-			shlvl := os.Getenv(env.SHLVL)
-			if shlvl != test.wantNew {
-				t.Errorf("got SHLVL = %q, want %q", shlvl, test.wantNew)
-			}
-
-			restore()
 			// Test that state of SHLVL is restored.
 			restored, restoredSet := os.LookupEnv(env.SHLVL)
 			if test.unset {
@@ -78,16 +145,18 @@ func TestIncSHLVL(t *testing.T) {
 	}
 }
 
-type fixture struct {
-	*Fixture
-	home string
+func setOrUnsetenv(t *testing.T, name string, unset bool, set string) {
+	if unset {
+		testutil.Unsetenv(t, name)
+	} else {
+		testutil.Setenv(t, name, set)
+	}
 }
 
-func setup(t Cleanuper) fixture {
-	Unsetenv(t, env.XDG_CONFIG_HOME)
-	Unsetenv(t, env.XDG_DATA_HOME)
-	home := TempHome(t)
-	return fixture{Setup(t), home}
-}
+// Common test utilities.
 
-func (f fixture) run(args []string) int { return prog.Run(f.Fds(), args, Program{}) }
+func setupCleanHomePaths(t testutil.Cleanuper) string {
+	testutil.Unsetenv(t, env.XDG_CONFIG_HOME)
+	testutil.Unsetenv(t, env.XDG_DATA_HOME)
+	return testutil.TempHome(t)
+}

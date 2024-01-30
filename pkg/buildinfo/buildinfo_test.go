@@ -2,47 +2,124 @@ package buildinfo
 
 import (
 	"fmt"
+	"runtime"
+	"runtime/debug"
 	"testing"
 
-	"src.elv.sh/pkg/prog"
-	. "src.elv.sh/pkg/prog/progtest"
+	"src.elv.sh/pkg/eval/vals"
+	"src.elv.sh/pkg/prog/progtest"
+	"src.elv.sh/pkg/testutil"
 )
 
-func TestVersion(t *testing.T) {
-	f := Setup(t)
+var ThatElvish = progtest.ThatElvish
 
-	prog.Run(f.Fds(), Elvish("-version"), Program)
+func TestProgram(t *testing.T) {
+	progtest.Test(t, &Program{},
+		ThatElvish("-version").WritesStdout(Value.Version+"\n"),
+		ThatElvish("-version", "-json").WritesStdout(mustToJSON(Value.Version)+"\n"),
 
-	f.TestOut(t, 1, Value.Version+"\n")
-	f.TestOut(t, 2, "")
+		ThatElvish("-buildinfo").WritesStdout(
+			fmt.Sprintf(
+				"Version: %v\nGo version: %v\n", Value.Version, Value.GoVersion)),
+		ThatElvish("-buildinfo", "-json").WritesStdout(mustToJSON(Value)+"\n"),
+
+		ThatElvish().ExitsWith(2).WritesStderr("internal error: no suitable subprogram\n"),
+	)
 }
 
-func TestVersion_JSON(t *testing.T) {
-	f := Setup(t)
-
-	prog.Run(f.Fds(), Elvish("-version", "-json"), Program)
-
-	f.TestOut(t, 1, mustToJSON(Value.Version)+"\n")
-	f.TestOut(t, 2, "")
+var devVersionTests = []struct {
+	name        string
+	next        string
+	vcsOverride string
+	buildInfo   *debug.BuildInfo
+	want        string
+}{
+	{
+		name: "no BuildInfo",
+		next: "0.42.0",
+		want: "0.42.0-dev.unknown",
+	},
+	{
+		name:      "BuildInfo with Main.Version = (devel)",
+		next:      "0.42.0",
+		buildInfo: &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}},
+		want:      "0.42.0-dev.unknown",
+	},
+	{
+		name:      "BuildInfo with non-empty Main.Version != (devel)",
+		next:      "0.42.0",
+		buildInfo: &debug.BuildInfo{Main: debug.Module{Version: "v0.42.0-dev.foobar"}},
+		want:      "0.42.0-dev.foobar",
+	},
+	{
+		name: "BuildInfo with VCS data from clean checkout",
+		next: "0.42.0",
+		buildInfo: &debug.BuildInfo{Settings: []debug.BuildSetting{
+			{Key: "vcs.revision", Value: "1234567890123456"},
+			{Key: "vcs.time", Value: "2022-04-01T23:59:58Z"},
+			{Key: "vcs.modified", Value: "false"},
+		}},
+		want: "0.42.0-dev.0.20220401235958-123456789012",
+	},
+	{
+		name: "BuildInfo with VCS data from dirty checkout",
+		next: "0.42.0",
+		buildInfo: &debug.BuildInfo{Settings: []debug.BuildSetting{
+			{Key: "vcs.revision", Value: "1234567890123456"},
+			{Key: "vcs.time", Value: "2022-04-01T23:59:58Z"},
+			{Key: "vcs.modified", Value: "true"},
+		}},
+		want: "0.42.0-dev.0.20220401235958-123456789012-dirty",
+	},
+	{
+		name: "BuildInfo with unknown VCS timestamp format",
+		next: "0.42.0",
+		buildInfo: &debug.BuildInfo{Settings: []debug.BuildSetting{
+			{Key: "vcs.revision", Value: "1234567890123456"},
+			{Key: "vcs.time", Value: "April First"},
+			{Key: "vcs.modified", Value: "false"},
+		}},
+		want: "0.42.0-dev.unknown",
+	},
+	{
+		name:        "vcsOverride",
+		next:        "0.42.0",
+		vcsOverride: "20220401235958-123456789012",
+		want:        "0.42.0-dev.0.20220401235958-123456789012",
+	},
 }
 
-func TestBuildInfo(t *testing.T) {
-	f := Setup(t)
-
-	prog.Run(f.Fds(), Elvish("-buildinfo"), Program)
-
-	f.TestOut(t, 1,
-		fmt.Sprintf(
-			"Version: %v\nGo version: %v\nReproducible build: %v\n",
-			Value.Version, Value.GoVersion, Value.Reproducible))
-	f.TestOut(t, 2, "")
+func TestDevVersion(t *testing.T) {
+	for _, test := range devVersionTests {
+		t.Run(test.name, func(t *testing.T) {
+			testutil.Set(t, &readBuildInfo,
+				func() (*debug.BuildInfo, bool) {
+					return test.buildInfo, test.buildInfo != nil
+				})
+			got := devVersion(test.next, test.vcsOverride)
+			if got != test.want {
+				t.Errorf("got %q, want %q", got, test.want)
+			}
+		})
+	}
 }
 
-func TestBuildInfo_JSON(t *testing.T) {
-	f := Setup(t)
+func TestAddVariant(t *testing.T) {
+	got := addVariant("0.42.0", "")
+	want := "0.42.0"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
 
-	prog.Run(f.Fds(), Elvish("-buildinfo", "-json"), Program)
+	got = addVariant("0.42.0", "distro")
+	want = "0.42.0+distro"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
 
-	f.TestOut(t, 1, mustToJSON(Value)+"\n")
-	f.TestOut(t, 2, "")
+func TestValue(t *testing.T) {
+	vals.TestValue(t, Value).
+		Index("version", Value.Version).
+		Index("go-version", runtime.Version())
 }

@@ -2,6 +2,7 @@ package eval
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -23,8 +24,18 @@ type Frame struct {
 	srcMeta parse.Source
 
 	local, up *Ns
+	defers    *[]func(*Frame) Exception
 
-	intCh <-chan struct{}
+	// The godoc of the context package states:
+	//
+	// > Do not store Contexts inside a struct type; instead, pass a Context
+	// > explicitly to each function that needs it.
+	//
+	// However, that advice is considered by many to be overly aggressive
+	// (https://github.com/golang/go/issues/22602). The Frame struct doesn't fit
+	// the "parameter struct" definition in that discussion, but it is itself is
+	// a "context struct". Storing a Context inside it seems fine.
+	ctx   context.Context
 	ports []*Port
 
 	traceback *StackTrace
@@ -55,8 +66,8 @@ func (fm *Frame) PrepareEval(src parse.Source, r diag.Ranger, ns *Ns) (*Ns, func
 		traceback = fm.addTraceback(r)
 	}
 	newFm := &Frame{
-		fm.Evaler, src, local, new(Ns), fm.intCh, fm.ports, traceback, fm.background}
-	op, err := compile(newFm.Evaler.Builtin().static(), local.static(), tree, fm.ErrorFile())
+		fm.Evaler, src, local, new(Ns), nil, fm.ctx, fm.ports, traceback, fm.background}
+	op, _, err := compile(fm.Evaler.Builtin().static(), local.static(), nil, tree, fm.ErrorFile())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -86,7 +97,7 @@ func (fm *Frame) Close() error {
 }
 
 // InputChan returns a channel from which input can be read.
-func (fm *Frame) InputChan() chan interface{} {
+func (fm *Frame) InputChan() chan any {
 	return fm.ports[0].Chan
 }
 
@@ -111,10 +122,21 @@ func (fm *Frame) ErrorFile() *os.File {
 	return fm.ports[2].File
 }
 
+// Port returns port i. If the port doesn't exist, it returns nil
+//
+// This is a low-level construct that shouldn't be used for writing output; for
+// that purpose, use [(*Frame).ValueOutput] and [(*Frame).ByteOutput] instead.
+func (fm *Frame) Port(i int) *Port {
+	if i >= len(fm.ports) {
+		return nil
+	}
+	return fm.ports[i]
+}
+
 // IterateInputs calls the passed function for each input element.
-func (fm *Frame) IterateInputs(f func(interface{})) {
+func (fm *Frame) IterateInputs(f func(any)) {
 	var wg sync.WaitGroup
-	inputs := make(chan interface{})
+	inputs := make(chan any)
 
 	wg.Add(2)
 	go func() {
@@ -137,7 +159,7 @@ func (fm *Frame) IterateInputs(f func(interface{})) {
 	}
 }
 
-func linesToChan(r io.Reader, ch chan<- interface{}) {
+func linesToChan(r io.Reader, ch chan<- any) {
 	filein := bufio.NewReader(r)
 	for {
 		line, err := filein.ReadString('\n')
@@ -153,9 +175,24 @@ func linesToChan(r io.Reader, ch chan<- interface{}) {
 	}
 }
 
-// fork returns a modified copy of ec. The ports are forked, and the name is
+// Context returns a Context associated with the Frame.
+func (fm *Frame) Context() context.Context {
+	return fm.ctx
+}
+
+// Canceled reports whether the Context of the Frame has been canceled.
+func (fm *Frame) Canceled() bool {
+	select {
+	case <-fm.ctx.Done():
+		return true
+	default:
+		return false
+	}
+}
+
+// Fork returns a modified copy of fm. The ports are forked, and the name is
 // changed to the given value. Other fields are copied shallowly.
-func (fm *Frame) fork(name string) *Frame {
+func (fm *Frame) Fork(name string) *Frame {
 	newPorts := make([]*Port, len(fm.ports))
 	for i, p := range fm.ports {
 		if p != nil {
@@ -164,22 +201,22 @@ func (fm *Frame) fork(name string) *Frame {
 	}
 	return &Frame{
 		fm.Evaler, fm.srcMeta,
-		fm.local, fm.up,
-		fm.intCh, newPorts,
+		fm.local, fm.up, fm.defers,
+		fm.ctx, newPorts,
 		fm.traceback, fm.background,
 	}
 }
 
 // A shorthand for forking a frame and setting the output port.
 func (fm *Frame) forkWithOutput(name string, p *Port) *Frame {
-	newFm := fm.fork(name)
+	newFm := fm.Fork(name)
 	newFm.ports[1] = p
 	return newFm
 }
 
 // CaptureOutput captures the output of a given callback that operates on a Frame.
-func (fm *Frame) CaptureOutput(f func(*Frame) error) ([]interface{}, error) {
-	outPort, collect, err := CapturePort()
+func (fm *Frame) CaptureOutput(f func(*Frame) error) ([]any, error) {
+	outPort, collect, err := ValueCapturePort()
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +225,7 @@ func (fm *Frame) CaptureOutput(f func(*Frame) error) ([]interface{}, error) {
 }
 
 // PipeOutput calls a callback with output piped to the given output handlers.
-func (fm *Frame) PipeOutput(f func(*Frame) error, vCb func(<-chan interface{}), bCb func(*os.File)) error {
+func (fm *Frame) PipeOutput(f func(*Frame) error, vCb func(<-chan any), bCb func(*os.File)) error {
 	outPort, done, err := PipePort(vCb, bCb)
 	if err != nil {
 		return err
@@ -213,16 +250,17 @@ func (fm *Frame) errorp(r diag.Ranger, e error) Exception {
 	case Exception:
 		return e
 	default:
-		ctx := diag.NewContext(fm.srcMeta.Name, fm.srcMeta.Code, r)
 		if _, ok := e.(errs.SetReadOnlyVar); ok {
-			e = errs.SetReadOnlyVar{VarName: ctx.RelevantString()}
+			r := r.Range()
+			e = errs.SetReadOnlyVar{VarName: fm.srcMeta.Code[r.From:r.To]}
 		}
+		ctx := diag.NewContext(fm.srcMeta.Name, fm.srcMeta.Code, r)
 		return &exception{e, &StackTrace{Head: ctx, Next: fm.traceback}}
 	}
 }
 
 // Returns an Exception with specified range and error text.
-func (fm *Frame) errorpf(r diag.Ranger, format string, args ...interface{}) Exception {
+func (fm *Frame) errorpf(r diag.Ranger, format string, args ...any) Exception {
 	return fm.errorp(r, fmt.Errorf(format, args...))
 }
 
@@ -233,11 +271,27 @@ func (fm *Frame) Deprecate(msg string, ctx *diag.Context, minLevel int) {
 		return
 	}
 	if ctx == nil {
-		fmt.Fprintf(fm.ErrorFile(), "deprecation: \033[31;1m%s\033[m\n", msg)
-		return
+		ctx = fm.traceback.Head
 	}
 	if fm.Evaler.registerDeprecation(deprecation{ctx.Name, ctx.Ranging, msg}) {
-		err := diag.Error{Type: "deprecation", Message: msg, Context: *ctx}
+		err := diag.Error[deprecationTag]{Message: msg, Context: *ctx}
 		fm.ErrorFile().WriteString(err.Show("") + "\n")
 	}
+}
+
+func (fm *Frame) addDefer(f func(*Frame) Exception) {
+	*fm.defers = append(*fm.defers, f)
+}
+
+func (fm *Frame) runDefers() Exception {
+	var exc Exception
+	defers := *fm.defers
+	for i := len(defers) - 1; i >= 0; i-- {
+		exc2 := defers[i](fm)
+		// TODO: Combine exc and exc2 if both are not nil
+		if exc2 != nil && exc == nil {
+			exc = exc2
+		}
+	}
+	return exc
 }

@@ -20,9 +20,17 @@ type parser struct {
 	src     string
 	pos     int
 	overEOF int
-	errors  Error
+	errors  []*Error
 	warn    io.Writer
 }
+
+// Error is a parse error.
+type Error = diag.Error[ErrorTag]
+
+// ErrorTag parameterizes [diag.Error] to define [Error].
+type ErrorTag struct{}
+
+func (ErrorTag) ErrorTag() string { return "parse error" }
 
 func (ps *parser) parse(n Node) parsed {
 	begin := ps.pos
@@ -33,19 +41,31 @@ func (ps *parser) parse(n Node) parsed {
 	return parsed{n}
 }
 
-var nodeType = reflect.TypeOf((*Node)(nil)).Elem()
+type parserState struct {
+	pos     int
+	overEOF int
+	errors  []*Error
+}
+
+func (ps *parser) save() parserState {
+	return parserState{ps.pos, ps.overEOF, ps.errors}
+}
+
+func (ps *parser) restore(s parserState) {
+	ps.pos, ps.overEOF, ps.errors = s.pos, s.overEOF, s.errors
+}
 
 type parsed struct {
 	n Node
 }
 
-func (p parsed) addAs(ptr interface{}, parent Node) {
+func (p parsed) addAs(ptr any, parent Node) {
 	dst := reflect.ValueOf(ptr).Elem()
 	dst.Set(reflect.ValueOf(p.n)) // *ptr = p.n
 	addChild(parent, p.n)
 }
 
-func (p parsed) addTo(ptr interface{}, parent Node) {
+func (p parsed) addTo(ptr any, parent Node) {
 	dst := reflect.ValueOf(ptr).Elem()
 	dst.Set(reflect.Append(dst, reflect.ValueOf(p.n))) // *ptr = append(*ptr, n)
 	addChild(parent, p.n)
@@ -57,14 +77,6 @@ func (ps *parser) done() {
 		r, _ := utf8.DecodeRuneInString(ps.src[ps.pos:])
 		ps.error(fmt.Errorf("unexpected rune %q", r))
 	}
-}
-
-// Assembles all parsing errors as one, or returns nil if there were no errors.
-func (ps *parser) assembleError() error {
-	if len(ps.errors.Entries) > 0 {
-		return &ps.errors
-	}
-	return nil
 }
 
 const eof rune = -1
@@ -101,7 +113,10 @@ func (ps *parser) backup() {
 }
 
 func (ps *parser) errorp(r diag.Ranger, e error) {
-	ps.errors.add(e.Error(), diag.NewContext(ps.srcName, ps.src, r))
+	err := &Error{
+		Message: e.Error(),
+		Context: *diag.NewContext(ps.srcName, ps.src, r)}
+	ps.errors = append(ps.errors, err)
 }
 
 func (ps *parser) error(e error) {
@@ -110,6 +125,15 @@ func (ps *parser) error(e error) {
 		end++
 	}
 	ps.errorp(diag.Ranging{From: ps.pos, To: end}, e)
+}
+
+// UnpackErrors returns the constituent parse errors if the given error contains
+// one or more parse errors. Otherwise it returns nil.
+func UnpackErrors(e error) []*Error {
+	if errs := diag.UnpackErrors[ErrorTag](e); len(errs) > 0 {
+		return errs
+	}
+	return nil
 }
 
 func newError(text string, shouldbe ...string) error {

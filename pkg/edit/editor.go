@@ -6,8 +6,10 @@
 package edit
 
 import (
+	_ "embed"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"src.elv.sh/pkg/cli"
 	"src.elv.sh/pkg/eval"
@@ -15,6 +17,7 @@ import (
 	"src.elv.sh/pkg/eval/vars"
 	"src.elv.sh/pkg/parse"
 	"src.elv.sh/pkg/store/storedefs"
+	"src.elv.sh/pkg/ui"
 )
 
 // Editor is the interactive line editor for Elvish.
@@ -25,6 +28,12 @@ type Editor struct {
 	excMutex sync.RWMutex
 	excList  vals.List
 
+	autofix atomic.Value
+	// This is an ugly hack to let the implementation of edit:smart-enter and
+	// edit:completion:smart-start to apply the autofix easily. This field is
+	// set in initHighlighter.
+	applyAutofix func()
+
 	// Maybe move this to another type that represents the REPL cycle as a whole, not just the
 	// read/edit portion represented by the Editor type.
 	AfterCommand []func(src parse.Source, duration float64, err error)
@@ -34,7 +43,7 @@ type Editor struct {
 // the *Editor type; functions may take a notifier instead of *Editor argument
 // to make it clear that they do not depend on other parts of *Editor.
 type notifier interface {
-	notifyf(format string, args ...interface{})
+	notifyf(format string, args ...any)
 	notifyError(ctx string, e error)
 }
 
@@ -45,7 +54,8 @@ func NewEditor(tty cli.TTY, ev *eval.Evaler, st storedefs.Store) *Editor {
 	// Declare the Editor with a nil App first; some initialization functions
 	// require a notifier as an argument, but does not use it immediately.
 	ed := &Editor{excList: vals.EmptyList}
-	nb := eval.NsBuilder{}
+	ed.autofix.Store("")
+	nb := eval.BuildNsNamed("edit")
 	appSpec := cli.AppSpec{TTY: tty}
 
 	hs, err := newHistStore(st)
@@ -53,12 +63,12 @@ func NewEditor(tty cli.TTY, ev *eval.Evaler, st storedefs.Store) *Editor {
 		_ = err // TODO(xiaq): Report the error.
 	}
 
-	initHighlighter(&appSpec, ev)
 	initMaxHeight(&appSpec, nb)
 	initReadlineHooks(&appSpec, ev, nb)
 	initAddCmdFilters(&appSpec, ev, nb, hs)
 	initGlobalBindings(&appSpec, ed, ev, nb)
 	initInsertAPI(&appSpec, ed, ev, nb)
+	initHighlighter(&appSpec, ed, ev, nb)
 	initPrompts(&appSpec, ed, ev, nb)
 	ed.app = cli.NewApp(appSpec)
 
@@ -75,7 +85,7 @@ func NewEditor(tty cli.TTY, ev *eval.Evaler, st storedefs.Store) *Editor {
 	initRepl(ed, ev, nb)
 	initBufferBuiltins(ed.app, nb)
 	initTTYBuiltins(ed.app, tty, nb)
-	initMiscBuiltins(ed.app, nb)
+	initMiscBuiltins(ed, nb)
 	initStateAPI(ed.app, nb)
 	initStoreAPI(ed.app, nb, hs)
 
@@ -85,18 +95,16 @@ func NewEditor(tty cli.TTY, ev *eval.Evaler, st storedefs.Store) *Editor {
 	return ed
 }
 
-//elvdoc:var exceptions
-//
-// A list of exceptions thrown from callbacks such as prompts. Useful for
-// examining tracebacks and other metadata.
-
 func initExceptionsAPI(ed *Editor, nb eval.NsBuilder) {
-	nb.Add("exceptions", vars.FromPtrWithMutex(&ed.excList, &ed.excMutex))
+	nb.AddVar("exceptions", vars.FromPtrWithMutex(&ed.excList, &ed.excMutex))
 }
+
+//go:embed init.elv
+var initElv string
 
 // Initialize the `edit` module by executing the pre-defined Elvish code for the module.
 func initElvishState(ev *eval.Evaler, ns *eval.Ns) {
-	src := parse.Source{Name: "[RC file]", Code: elvInit}
+	src := parse.Source{Name: "[init.elv]", Code: initElv}
 	err := ev.Eval(src, eval.EvalCfg{Global: ns})
 	if err != nil {
 		panic(err)
@@ -106,6 +114,11 @@ func initElvishState(ev *eval.Evaler, ns *eval.Ns) {
 // ReadCode reads input from the user.
 func (ed *Editor) ReadCode() (string, error) {
 	return ed.app.ReadCode()
+}
+
+// Notify adds a note to the notification buffer.
+func (ed *Editor) Notify(note ui.Text) {
+	ed.app.Notify(note)
 }
 
 // RunAfterCommandHooks runs callbacks involving the interactive completion of a command line.
@@ -122,15 +135,15 @@ func (ed *Editor) Ns() *eval.Ns {
 	return ed.ns
 }
 
-func (ed *Editor) notifyf(format string, args ...interface{}) {
-	ed.app.Notify(fmt.Sprintf(format, args...))
+func (ed *Editor) notifyf(format string, args ...any) {
+	ed.app.Notify(ui.T(fmt.Sprintf(format, args...)))
 }
 
 func (ed *Editor) notifyError(ctx string, e error) {
 	if exc, ok := e.(eval.Exception); ok {
 		ed.excMutex.Lock()
 		defer ed.excMutex.Unlock()
-		ed.excList = ed.excList.Cons(exc)
+		ed.excList = ed.excList.Conj(exc)
 		ed.notifyf("[%v error] %v\n"+
 			`see stack trace with "show $edit:exceptions[%d]"`,
 			ctx, e, ed.excList.Len()-1)

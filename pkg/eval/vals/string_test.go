@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"testing"
 
-	. "src.elv.sh/pkg/tt"
+	"src.elv.sh/pkg/tt"
 )
 
 func TestToString(t *testing.T) {
-	Test(t, Fn("ToString", ToString), Table{
+	tt.Test(t, ToString,
 		// string
 		Args("a").Rets("a"),
 
@@ -21,7 +21,7 @@ func TestToString(t *testing.T) {
 		// scientific notation.
 		Args(1e13).Rets("10000000000000.0"),
 		Args(1e14).Rets("1e+14"),
-		Args(1e14 + 1).Rets("100000000000001.0"),
+		Args(1e14+1).Rets("100000000000001.0"),
 		// Numbers smaller than 0.0001 are printed in scientific notation.
 		Args(0.0001).Rets("0.0001"),
 		Args(0.00001).Rets("1e-05"),
@@ -31,5 +31,5 @@ func TestToString(t *testing.T) {
 		Args(bytes.NewBufferString("buffer")).Rets("buffer"),
 		// None of the above: delegate to Repr
 		Args(true).Rets("$true"),
-	})
+	)
 }

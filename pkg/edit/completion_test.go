@@ -5,9 +5,11 @@ import (
 
 	"src.elv.sh/pkg/cli/term"
 	"src.elv.sh/pkg/eval"
+	"src.elv.sh/pkg/eval/errs"
 	. "src.elv.sh/pkg/eval/evaltest"
 	"src.elv.sh/pkg/eval/vals"
 	"src.elv.sh/pkg/testutil"
+	"src.elv.sh/pkg/ui"
 )
 
 func TestCompletionAddon(t *testing.T) {
@@ -48,35 +50,68 @@ func TestCompletionAddon_CompletesLongestCommonPrefix(t *testing.T) {
 	)
 }
 
+func TestCompletionAddon_AppliesAutofix(t *testing.T) {
+	f := setup(t)
+	fooNs := eval.BuildNs().AddGoFn("a", func() {}).AddGoFn("b", func() {}).Ns()
+	f.Evaler.AddModule("foo", fooNs)
+
+	feedInput(f.TTYCtrl, "foo:")
+	f.TestTTY(t,
+		"~> foo:", Styles,
+		"   !!!!", term.DotHere, "\n",
+		"Ctrl-A autofix: use foo Tab Enter autofix first", Styles,
+		"++++++                  +++ +++++",
+	)
+
+	feedInput(f.TTYCtrl, "\t")
+	f.TestTTY(t,
+		"~> foo:a\n", Styles,
+		"   VVVVV",
+		" COMPLETING command  ", Styles,
+		"******************** ", term.DotHere, "\n",
+		"foo:a  foo:b", Styles,
+		"+++++       ",
+	)
+}
+
 func TestCompleteFilename(t *testing.T) {
 	f := setup(t)
 
 	testutil.ApplyDir(testutil.Dir{"d": testutil.Dir{"a": "", "b": ""}})
 
-	evals(f.Evaler, `@cands = (edit:complete-filename ls ./d/a)`)
+	evals(f.Evaler, `var @cands = (edit:complete-filename ls ./d/a)`)
 	testGlobal(t, f.Evaler,
 		"cands",
 		vals.MakeList(
-			complexItem{Stem: "./d/a", CodeSuffix: " "},
-			complexItem{Stem: "./d/b", CodeSuffix: " "}))
+			complexItem{Stem: "./d/a", CodeSuffix: " ", Display: ui.T("./d/a")},
+			complexItem{Stem: "./d/b", CodeSuffix: " ", Display: ui.T("./d/b")}))
 
 	testThatOutputErrorIsBubbled(t, f, "edit:complete-filename ls ''")
 }
 
 func TestComplexCandidate(t *testing.T) {
-	TestWithSetup(t, func(ev *eval.Evaler) {
-		ev.AddGlobal(eval.NsBuilder{}.AddGoFn("", "cc", complexCandidate).Ns())
+	TestWithEvalerSetup(t, func(ev *eval.Evaler) {
+		ev.ExtendGlobal(eval.BuildNs().AddGoFn("cc", complexCandidate))
 	},
+		That("cc a/b").Puts(complexItem{Stem: "a/b"}),
+		That("cc a/b &code-suffix=' '").Puts(complexItem{Stem: "a/b", CodeSuffix: " "}),
+		That("cc a/b &code-suffix=' ' &display=A/B").Puts(
+			complexItem{"a/b", " ", ui.T("A/B")}),
+		That("cc a/b &code-suffix=' ' &display=(styled A/B red)").Puts(
+			complexItem{"a/b", " ", ui.T("A/B", ui.FgRed)}),
+		That("cc a/b &code-suffix=' ' &display=[]").Throws(
+			errs.BadValue{What: "&display", Valid: "string or styled", Actual: "[]"}),
+
 		That("kind-of (cc stem)").Puts("map"),
 		That("keys (cc stem)").Puts("stem", "code-suffix", "display"),
 		That("repr (cc a/b &code-suffix=' ' &display=A/B)").Prints(
-			"(edit:complex-candidate a/b &code-suffix=' ' &display=A/B)\n"),
+			"(edit:complex-candidate a/b &code-suffix=' ' &display=(ui:text A/B))\n"),
 		That("eq (cc stem) (cc stem)").Puts(true),
 		That("eq (cc stem &code-suffix=' ') (cc stem)").Puts(false),
 		That("eq (cc stem &display=STEM) (cc stem)").Puts(false),
 		That("put [&(cc stem)=value][(cc stem)]").Puts("value"),
 		That("put (cc a/b &code-suffix=' ' &display=A/B)[stem code-suffix display]").
-			Puts("a/b", " ", "A/B"),
+			Puts("a/b", " ", ui.T("A/B")),
 	)
 }
 
@@ -85,7 +120,7 @@ func TestComplexCandidate_InEditModule(t *testing.T) {
 	// module.
 	f := setup(t)
 
-	evals(f.Evaler, `stem = (edit:complex-candidate stem)[stem]`)
+	evals(f.Evaler, `var stem = (edit:complex-candidate stem)[stem]`)
 	testGlobal(t, f.Evaler, "stem", "stem")
 }
 
@@ -93,10 +128,10 @@ func TestCompletionArgCompleter_ArgsAndValueOutput(t *testing.T) {
 	f := setup(t)
 
 	evals(f.Evaler,
-		`foo-args = []`,
+		`var foo-args = []`,
 		`fn foo { }`,
-		`edit:completion:arg-completer[foo] = [@args]{
-		   foo-args = $args
+		`set edit:completion:arg-completer[foo] = {|@args|
+		   set foo-args = $args
 		   put 1val
 		   edit:complex-candidate 2val &display=2VAL
 		 }`)
@@ -119,7 +154,7 @@ func TestCompletionArgCompleter_BytesOutput(t *testing.T) {
 
 	evals(f.Evaler,
 		`fn foo { }`,
-		`edit:completion:arg-completer[foo] = [@args]{
+		`set edit:completion:arg-completer[foo] = {|@args|
 		   echo 1val
 		   echo 2val
 		 }`)
@@ -140,11 +175,11 @@ func TestCompleteSudo(t *testing.T) {
 
 	evals(f.Evaler,
 		`fn foo { }`,
-		`edit:completion:arg-completer[foo] = [@args]{
+		`set edit:completion:arg-completer[foo] = {|@args|
 		   echo val1
 		   echo val2
 		 }`,
-		`@cands = (edit:complete-sudo sudo foo '')`)
+		`var @cands = (edit:complete-sudo sudo foo '')`)
 	testGlobal(t, f.Evaler, "cands", vals.MakeList("val1", "val2"))
 }
 
@@ -153,7 +188,7 @@ func TestCompletionMatcher(t *testing.T) {
 
 	testutil.ApplyDir(testutil.Dir{"foo": "", "oof": ""})
 
-	evals(f.Evaler, `edit:completion:matcher[''] = $edit:match-substr~`)
+	evals(f.Evaler, `set edit:completion:matcher[''] = $edit:match-substr~`)
 	feedInput(f.TTYCtrl, "echo f\t")
 	f.TestTTY(t,
 		"~> echo foo \n", Styles,
@@ -169,11 +204,11 @@ func TestBuiltinMatchers(t *testing.T) {
 	f := setup(t)
 
 	evals(f.Evaler,
-		`@prefix = (edit:match-prefix ab [ab abc cab acb ba [ab] [a b] [b a]])`,
-		`@substr = (edit:match-substr ab [ab abc cab acb ba [ab] [a b] [b a]])`,
-		`@subseq = (edit:match-subseq ab [ab abc cab acb ba [ab] [a b] [b a]])`,
+		`var @prefix = (edit:match-prefix ab [ab abc cab acb ba [ab] [a b] [b a]])`,
+		`var @substr = (edit:match-substr ab [ab abc cab acb ba [ab] [a b] [b a]])`,
+		`var @subseq = (edit:match-subseq ab [ab abc cab acb ba [ab] [a b] [b a]])`,
 	)
-	testGlobals(t, f.Evaler, map[string]interface{}{
+	testGlobals(t, f.Evaler, map[string]any{
 		"prefix": vals.MakeList(true, true, false, false, false, false, false, false),
 		"substr": vals.MakeList(true, true, true, false, false, true, false, false),
 		"subseq": vals.MakeList(true, true, true, true, false, true, true, false),
@@ -188,12 +223,12 @@ func TestBuiltinMatchers_Options(t *testing.T) {
 	// The two options work identically on all the builtin matchers, so we only
 	// test for match-prefix for simplicity.
 	evals(f.Evaler,
-		`@a = (edit:match-prefix &ignore-case ab [abc aBc AbC])`,
-		`@b = (edit:match-prefix &ignore-case aB [abc aBc AbC])`,
-		`@c = (edit:match-prefix &smart-case  ab [abc aBc Abc])`,
-		`@d = (edit:match-prefix &smart-case  aB [abc aBc AbC])`,
+		`var @a = (edit:match-prefix &ignore-case ab [abc aBc AbC])`,
+		`var @b = (edit:match-prefix &ignore-case aB [abc aBc AbC])`,
+		`var @c = (edit:match-prefix &smart-case  ab [abc aBc Abc])`,
+		`var @d = (edit:match-prefix &smart-case  aB [abc aBc AbC])`,
 	)
-	testGlobals(t, f.Evaler, map[string]interface{}{
+	testGlobals(t, f.Evaler, map[string]any{
 		"a": vals.MakeList(true, true, true),
 		"b": vals.MakeList(true, true, true),
 		"c": vals.MakeList(true, true, true),

@@ -3,9 +3,9 @@ package vals
 import (
 	"math"
 	"math/big"
-	"reflect"
 
 	"src.elv.sh/pkg/persistent/hash"
+	"src.elv.sh/pkg/persistent/hashmap"
 )
 
 // Hasher wraps the Hash method.
@@ -18,7 +18,7 @@ type Hasher interface {
 // types bool and string, the File, List, Map types, StructMap types, and types
 // satisfying the Hasher interface. For other values, it returns 0 (which is OK
 // in terms of correctness).
-func Hash(v interface{}) uint32 {
+func Hash(v any) uint32 {
 	switch v := v.(type) {
 	case bool:
 		if v {
@@ -50,22 +50,28 @@ func Hash(v interface{}) uint32 {
 		}
 		return h
 	case Map:
-		h := hash.DJBInit
-		for it := v.Iterator(); it.HasElem(); it.Next() {
-			k, v := it.Elem()
-			h = hash.DJBCombine(h, Hash(k))
-			h = hash.DJBCombine(h, Hash(v))
-		}
-		return h
+		return hashMap(v.Iterator())
 	case StructMap:
-		h := hash.DJBInit
-		it := iterateStructMap(reflect.TypeOf(v))
-		vValue := reflect.ValueOf(v)
-		for it.Next() {
-			_, field := it.Get(vValue)
-			h = hash.DJBCombine(h, Hash(field))
-		}
-		return h
+		return hashMap(iterateStructMap(v))
 	}
 	return 0
+}
+
+func hashMap(it hashmap.Iterator) uint32 {
+	// The iteration order of maps only depends on the hash of the keys. It is
+	// almost deterministic, with only one exception: when two keys have the
+	// same hash, they get produced in insertion order. As a result, it is
+	// possible for two maps that should be considered equal to produce entries
+	// in different orders.
+	//
+	// So instead of using hash.DJBCombine, combine the hash result from each
+	// key-value pair by summing, so that the order doesn't matter.
+	//
+	// TODO: This may not have very good hashing properties.
+	var h uint32
+	for ; it.HasElem(); it.Next() {
+		k, v := it.Elem()
+		h += hash.DJB(Hash(k), Hash(v))
+	}
+	return h
 }

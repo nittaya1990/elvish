@@ -1,5 +1,4 @@
-//go:build !windows && !plan9 && !js
-// +build !windows,!plan9,!js
+//go:build unix
 
 package fsutil
 
@@ -11,9 +10,6 @@ import (
 	"src.elv.sh/pkg/testutil"
 )
 
-// TODO: When EachExternal is modified to work on Windows either fold this
-// test into external_cmd_test.go or create an external_cmd_windows_test.go
-// that performs an equivalent test on Windows.
 func TestEachExternal(t *testing.T) {
 	binPath := testutil.InTempDir(t)
 

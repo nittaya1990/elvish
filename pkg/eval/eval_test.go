@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	. "src.elv.sh/pkg/eval"
-	"src.elv.sh/pkg/prog/progtest"
+	"src.elv.sh/pkg/prog"
 
 	. "src.elv.sh/pkg/eval/evaltest"
 	"src.elv.sh/pkg/eval/vals"
@@ -33,47 +33,47 @@ func TestNumBgJobs(t *testing.T) {
 func TestArgs(t *testing.T) {
 	Test(t,
 		That("put $args").Puts(vals.EmptyList))
-	TestWithSetup(t,
-		func(ev *Evaler) { ev.SetArgs([]string{"foo", "bar"}) },
+	TestWithEvalerSetup(t,
+		func(ev *Evaler) { ev.Args = vals.MakeList("foo", "bar") },
 		That("put $args").Puts(vals.MakeList("foo", "bar")))
 }
 
 func TestEvalTimeDeprecate(t *testing.T) {
-	progtest.SetDeprecationLevel(t, 42)
+	testutil.Set(t, &prog.DeprecationLevel, 42)
 	testutil.InTempDir(t)
 
-	TestWithSetup(t, func(ev *Evaler) {
-		ev.AddGlobal(NsBuilder{}.AddGoFn("", "dep", func(fm *Frame) {
+	TestWithEvalerSetup(t, func(ev *Evaler) {
+		ev.ExtendGlobal(BuildNs().AddGoFn("dep", func(fm *Frame) {
 			fm.Deprecate("deprecated", nil, 42)
-		}).Ns())
+		}))
 	},
 		That("dep").PrintsStderrWith("deprecated"),
-		// Deprecation message is only shown once.
-		That("dep 2> tmp.txt; dep").DoesNothing(),
+		// Deprecation message from the same location is only shown once.
+		That("fn f { dep }", "f 2> tmp.txt; f").DoesNothing(),
 	)
 }
 
 func TestMultipleEval(t *testing.T) {
 	Test(t,
-		That("x = hello").Then("put $x").Puts("hello"),
+		That("var x = hello").Then("put $x").Puts("hello"),
 
 		// Shadowing with fn. Regression test for #1213.
 		That("fn f { put old }").Then("fn f { put new }").Then("f").
 			Puts("new"),
 		// Variable deletion. Regression test for #1213.
-		That("x = foo").Then("del x").Then("put $x").DoesNotCompile(),
+		That("var x = foo").Then("del x").Then("put $x").DoesNotCompile("variable $x not found"),
 	)
 }
 
 func TestEval_AlternativeGlobal(t *testing.T) {
 	ev := NewEvaler()
-	g := NsBuilder{"a": vars.NewReadOnly("")}.Ns()
-	err := ev.Eval(parse.Source{Code: "nop $a"}, EvalCfg{Global: g})
+	g := BuildNs().AddVar("a", vars.NewReadOnly("")).Ns()
+	err := ev.Eval(parse.Source{Name: "[test]", Code: "nop $a"}, EvalCfg{Global: g})
 	if err != nil {
 		t.Errorf("got error %v, want nil", err)
 	}
 	// Regression test for #1223
-	if ev.Global().HasName("a") {
+	if ev.Global().HasKeyString("a") {
 		t.Errorf("$a from alternative global leaked into Evaler global")
 	}
 }
@@ -84,19 +84,19 @@ func TestEval_Concurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
-		ev.Eval(parse.Source{Code: "var a"}, EvalCfg{})
+		ev.Eval(parse.Source{Name: "[test]", Code: "var a"}, EvalCfg{})
 		wg.Done()
 	}()
 	go func() {
-		ev.Eval(parse.Source{Code: "var b"}, EvalCfg{})
+		ev.Eval(parse.Source{Name: "[test]", Code: "var b"}, EvalCfg{})
 		wg.Done()
 	}()
 	wg.Wait()
 	g := ev.Global()
-	if !g.HasName("a") {
+	if !g.HasKeyString("a") {
 		t.Errorf("variable $a not created")
 	}
-	if !g.HasName("b") {
+	if !g.HasKeyString("b") {
 		t.Errorf("variable $b not created")
 	}
 }
@@ -117,8 +117,8 @@ func TestCall(t *testing.T) {
 	passedOpt := "opt value"
 	ev.Call(fn,
 		CallCfg{
-			Args: []interface{}{passedArg},
-			Opts: map[string]interface{}{"opt": passedOpt},
+			Args: []any{passedArg},
+			Opts: map[string]any{"opt": passedOpt},
 			From: "[TestCall]"},
 		EvalCfg{})
 
@@ -149,7 +149,7 @@ func TestCheck(t *testing.T) {
 	ev := NewEvaler()
 	for _, test := range checkTests {
 		t.Run(test.name, func(t *testing.T) {
-			parseErr, compileErr := ev.Check(parse.Source{Code: test.code}, nil)
+			parseErr, _, compileErr := ev.Check(parse.Source{Name: "[test]", Code: test.code}, nil)
 			if (parseErr != nil) != test.wantParseErr {
 				t.Errorf("got parse error %v, when wantParseErr = %v",
 					parseErr, test.wantParseErr)

@@ -6,8 +6,18 @@ import (
 )
 
 func Ns(s storedefs.Store) *eval.Ns {
-	return eval.NsBuilder{}.AddGoFns("store:", map[string]interface{}{
-		"del-dir": s.DelDir,
-		"del-cmd": s.DelCmd,
-	}).Ns()
+	return eval.BuildNsNamed("store").
+		AddGoFns(map[string]any{
+			"next-cmd-seq": s.NextCmdSeq,
+			"add-cmd":      s.AddCmd,
+			"del-cmd":      s.DelCmd,
+			"cmd":          s.Cmd,
+			"cmds":         s.CmdsWithSeq,
+			"next-cmd":     s.NextCmd,
+			"prev-cmd":     s.PrevCmd,
+
+			"add-dir": func(dir string) error { return s.AddDir(dir, 1) },
+			"del-dir": s.DelDir,
+			"dirs":    func() ([]storedefs.Dir, error) { return s.Dirs(storedefs.NoBlacklist) },
+		}).Ns()
 }

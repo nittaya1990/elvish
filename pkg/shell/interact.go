@@ -11,16 +11,16 @@ import (
 	"time"
 
 	"src.elv.sh/pkg/cli"
-	"src.elv.sh/pkg/cli/term"
 	"src.elv.sh/pkg/daemon/daemondefs"
 	"src.elv.sh/pkg/diag"
 	"src.elv.sh/pkg/edit"
 	"src.elv.sh/pkg/eval"
-	daemonmod "src.elv.sh/pkg/mods/daemon"
+	"src.elv.sh/pkg/mods/daemon"
 	"src.elv.sh/pkg/mods/store"
 	"src.elv.sh/pkg/parse"
 	"src.elv.sh/pkg/strutil"
 	"src.elv.sh/pkg/sys"
+	"src.elv.sh/pkg/ui"
 )
 
 // InteractiveRescueShell determines whether a panic results in a rescue shell
@@ -48,6 +48,7 @@ func interact(ev *eval.Evaler, fds [3]*os.File, cfg *interactCfg) {
 		defer handlePanic()
 	}
 
+	var daemonClient daemondefs.Client
 	if cfg.ActivateDaemon != nil && cfg.SpawnConfig != nil {
 		// TODO(xiaq): Connect to daemon and install daemon module
 		// asynchronously.
@@ -56,25 +57,23 @@ func interact(ev *eval.Evaler, fds [3]*os.File, cfg *interactCfg) {
 			fmt.Fprintln(fds[2], "Cannot connect to daemon:", err)
 			fmt.Fprintln(fds[2], "Daemon-related functions will likely not work.")
 		}
-		defer func() {
-			err := cl.Close()
-			if err != nil {
-				fmt.Fprintln(fds[2],
-					"warning: failed to close connection to daemon:", err)
-			}
-		}()
-		// Even if error is not nil, we install daemon-related functionalities
-		// anyway. Daemon may eventually come online and become functional.
-		ev.SetDaemonClient(cl)
-		ev.AddModule("store", store.Ns(cl))
-		ev.AddModule("daemon", daemonmod.Ns(cl))
+		if cl != nil {
+			// Even if error is not nil, we install daemon-related
+			// functionalities anyway. Daemon may eventually come online and
+			// become functional.
+			daemonClient = cl
+			ev.PreExitHooks = append(ev.PreExitHooks, func() { cl.Close() })
+			ev.AddModule("store", store.Ns(cl))
+			ev.AddModule("daemon", daemon.Ns(cl))
+		}
 	}
 
 	// Build Editor.
 	var ed editor
-	if sys.IsATTY(fds[0]) {
-		newed := edit.NewEditor(cli.NewTTY(fds[0], fds[2]), ev, ev.DaemonClient())
-		ev.AddBuiltin(eval.NsBuilder{}.AddNs("edit", newed.Ns()).Ns())
+	if sys.IsATTY(fds[0].Fd()) {
+		newed := edit.NewEditor(cli.NewTTY(fds[0], fds[2]), ev, daemonClient)
+		ev.ExtendBuiltin(eval.BuildNs().AddNs("edit", newed))
+		ev.BgJobNotify = func(s string) { newed.Notify(ui.T(s)) }
 		ed = newed
 	} else {
 		ed = newMinEditor(fds[0], fds[2])
@@ -87,8 +86,6 @@ func interact(ev *eval.Evaler, fds [3]*os.File, cfg *interactCfg) {
 			diag.ShowError(fds[2], err)
 		}
 	}
-
-	term.Sanitize(fds[0], fds[2])
 
 	cooldown := time.Second
 	cmdNum := 0
@@ -124,10 +121,8 @@ func interact(ev *eval.Evaler, fds [3]*os.File, cfg *interactCfg) {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		src := parse.Source{Name: fmt.Sprintf("[tty %v]", cmdNum), Code: line}
-		duration, err := evalInTTY(ev, fds, src)
-		ed.RunAfterCommandHooks(src, duration, err)
-		term.Sanitize(fds[0], fds[2])
+		err = evalInTTY(fds, ev, ed,
+			parse.Source{Name: fmt.Sprintf("[tty %v]", cmdNum), Code: line})
 		if err != nil {
 			diag.ShowError(fds[2], err)
 		}
@@ -147,7 +142,7 @@ func handlePanic() {
 	}
 }
 
-func sourceRC(fds [3]*os.File, ev *eval.Evaler, ed eval.Editor, rcPath string) error {
+func sourceRC(fds [3]*os.File, ev *eval.Evaler, ed editor, rcPath string) error {
 	absPath, err := filepath.Abs(rcPath)
 	if err != nil {
 		return fmt.Errorf("cannot get full path of rc.elv: %v", err)
@@ -159,10 +154,7 @@ func sourceRC(fds [3]*os.File, ev *eval.Evaler, ed eval.Editor, rcPath string) e
 		}
 		return err
 	}
-	src := parse.Source{Name: absPath, Code: code, IsFile: true}
-	duration, err := evalInTTY(ev, fds, src)
-	ed.RunAfterCommandHooks(src, duration, err)
-	return err
+	return evalInTTY(fds, ev, ed, parse.Source{Name: absPath, Code: code, IsFile: true})
 }
 
 type minEditor struct {

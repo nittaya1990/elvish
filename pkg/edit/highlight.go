@@ -3,27 +3,53 @@ package edit
 import (
 	"os"
 	"os/exec"
+	"strings"
 
 	"src.elv.sh/pkg/cli"
+	"src.elv.sh/pkg/diag"
 	"src.elv.sh/pkg/edit/highlight"
 	"src.elv.sh/pkg/eval"
 	"src.elv.sh/pkg/fsutil"
 	"src.elv.sh/pkg/parse"
+	"src.elv.sh/pkg/ui"
 )
 
-func initHighlighter(appSpec *cli.AppSpec, ev *eval.Evaler) {
-	appSpec.Highlighter = highlight.NewHighlighter(highlight.Config{
-		Check:      func(tree parse.Tree) error { return check(ev, tree) },
-		HasCommand: func(cmd string) bool { return hasCommand(ev, cmd) },
-	})
-}
+func initHighlighter(appSpec *cli.AppSpec, ed *Editor, ev *eval.Evaler, nb eval.NsBuilder) {
+	hl := highlight.NewHighlighter(highlight.Config{
+		Check: func(t parse.Tree) (string, []diag.RangeError) {
+			autofixes, err := ev.CheckTree(t, nil)
+			autofix := strings.Join(autofixes, "; ")
+			ed.autofix.Store(autofix)
 
-func check(ev *eval.Evaler, tree parse.Tree) error {
-	err := ev.CheckTree(tree, nil)
-	if err == nil {
-		return nil
+			compErrors := eval.UnpackCompilationErrors(err)
+			rangeErrors := make([]diag.RangeError, len(compErrors))
+			for i, compErr := range compErrors {
+				rangeErrors[i] = compErr
+			}
+
+			return autofix, rangeErrors
+		},
+		HasCommand: func(cmd string) bool { return hasCommand(ev, cmd) },
+		AutofixTip: func(autofix string) ui.Text {
+			return bindingTips(ed.ns, "insert:binding",
+				bindingTip("autofix: "+autofix, "apply-autofix"),
+				bindingTip("autofix first", "smart-enter", "completion:smart-start"))
+		},
+	})
+	appSpec.Highlighter = hl
+	ed.applyAutofix = func() {
+		code := ed.autofix.Load().(string)
+		if code == "" {
+			return
+		}
+		// TODO: Check errors.
+		//
+		// For now, the autofix snippets are simple enough that we know they'll
+		// always succeed.
+		ev.Eval(parse.Source{Name: "[autofix]", Code: code}, eval.EvalCfg{})
+		hl.InvalidateCache()
 	}
-	return err
+	nb.AddGoFn("apply-autofix", ed.applyAutofix)
 }
 
 func hasCommand(ev *eval.Evaler, cmd string) bool {
@@ -100,7 +126,7 @@ func hasFn(ns *eval.Ns, name string) bool {
 
 func isDirOrExecutable(fname string) bool {
 	stat, err := os.Stat(fname)
-	return err == nil && (stat.IsDir() || stat.Mode()&0111 != 0)
+	return err == nil && (stat.IsDir() || fsutil.IsExecutable(stat))
 }
 
 func hasExternalCommand(cmd string) bool {

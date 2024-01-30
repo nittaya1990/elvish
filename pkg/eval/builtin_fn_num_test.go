@@ -3,11 +3,15 @@ package eval_test
 import (
 	"math"
 	"math/big"
+	"math/rand"
 	"strings"
 	"testing"
+	"time"
+	"unsafe"
 
 	. "src.elv.sh/pkg/eval"
 	"src.elv.sh/pkg/eval/errs"
+	"src.elv.sh/pkg/eval/vals"
 
 	. "src.elv.sh/pkg/eval/evaltest"
 )
@@ -44,10 +48,12 @@ func TestExactNum(t *testing.T) {
 	)
 }
 
-func TestFloat64(t *testing.T) {
+func TestInexactNum(t *testing.T) {
 	Test(t,
-		That("float64 1").Puts(1.0),
-		That("float64 (float64 1)").Puts(1.0),
+		That("inexact-num 1").Puts(1.0),
+		That("inexact-num 1.0").Puts(1.0),
+		That("inexact-num (num 1)").Puts(1.0),
+		That("inexact-num (num 1.0)").Puts(1.0),
 	)
 }
 
@@ -166,6 +172,7 @@ func TestArithmeticCommands(t *testing.T) {
 		// Mixing of types not tested for commands below; they share the same
 		// code path as +.
 
+		That("-").Throws(ErrorWithType(errs.ArityMismatch{})),
 		// One argument - negation
 		That("- 233").Puts(-233),
 		That("- "+z).Puts(bigInt("-"+z)),
@@ -175,6 +182,8 @@ func TestArithmeticCommands(t *testing.T) {
 		That("- 20 10 2").Puts(8),
 		// bigint
 		That("- "+args(zz3, z1)).Puts(bigInt(z2)),
+		// bigrat
+		That("- 1/2 1/3").Puts(big.NewRat(1, 6)),
 		// float64
 		That("- 2.0 1.0 0.5").Puts(0.5),
 
@@ -184,6 +193,8 @@ func TestArithmeticCommands(t *testing.T) {
 		That("* 2 7 4").Puts(56),
 		// bigint
 		That("* 2 "+z1).Puts(bigInt(zz2)),
+		// bigrat
+		That("* 1/2 1/3").Puts(big.NewRat(1, 6)),
 		// float64
 		That("* 2.0 0.5 1.75").Puts(1.75),
 		// 0 * non-infinity
@@ -219,13 +230,107 @@ func TestArithmeticCommands(t *testing.T) {
 func TestRandint(t *testing.T) {
 	Test(t,
 		That("randint 1 2").Puts(1),
-		That("i = (randint 10 100); >= $i 10; < $i 100").Puts(true, true),
+		That("randint 1").Puts(0),
+		That("var i = (randint 10 100); and (<= 10 $i) (< $i 100)").Puts(true),
+		That("var i = (randint 10); and (<= 0 $i) (< $i 10)").Puts(true),
+
 		That("randint 2 1").Throws(
 			errs.BadValue{What: "high value", Valid: "larger than 2", Actual: "1"},
 			"randint 2 1"),
 		That("randint").Throws(ErrorWithType(errs.ArityMismatch{}), "randint"),
-		That("randint 1").Throws(ErrorWithType(errs.ArityMismatch{}), "randint 1"),
 		That("randint 1 2 3").Throws(ErrorWithType(errs.ArityMismatch{}), "randint 1 2 3"),
+	)
+}
+
+func TestRandSeed(t *testing.T) {
+	//lint:ignore SA1019 Reseed to make other RNG-dependent tests non-deterministic
+	defer rand.Seed(time.Now().UTC().UnixNano())
+
+	Test(t,
+		// Observe that the effect of -randseed is making randint deterministic
+		That("fn f { -randseed 0; randint 10 }; eq (f) (f)").Puts(true),
+	)
+}
+
+var (
+	maxInt = 1<<((unsafe.Sizeof(0)*8)-1) - 1
+	minInt = -maxInt - 1
+
+	maxDenseIntInFloat = float64(1 << 53)
+)
+
+func TestRange(t *testing.T) {
+	Test(t,
+		// Basic argument sanity checks.
+		That("range").Throws(ErrorWithType(errs.ArityMismatch{})),
+		That("range 0 1 2").Throws(ErrorWithType(errs.ArityMismatch{})),
+
+		// Int count up.
+		That("range 3").Puts(0, 1, 2),
+		That("range 1 3").Puts(1, 2),
+		// Int count down.
+		That("range -1 10 &step=3").Puts(-1, 2, 5, 8),
+		That("range 3 -3").Puts(3, 2, 1, 0, -1, -2),
+		// Near maxInt or minInt.
+		That("range "+args(maxInt-2, maxInt)).Puts(maxInt-2, maxInt-1),
+		That("range "+args(maxInt, maxInt-2)).Puts(maxInt, maxInt-1),
+		That("range "+args(minInt, minInt+2)).Puts(minInt, minInt+1),
+		That("range "+args(minInt+2, minInt)).Puts(minInt+2, minInt+1),
+		// Invalid step given the "start" and "end" values of the range.
+		That("range &step=-1 1").
+			Throws(errs.BadValue{What: "step", Valid: "positive", Actual: "-1"}),
+		That("range &step=1 1 0").
+			Throws(errs.BadValue{What: "step", Valid: "negative", Actual: "1"}),
+		thatOutputErrorIsBubbled("range 2"),
+
+		// Big int count up.
+		That("range "+z+" "+z3).Puts(bigInt(z), bigInt(z1), bigInt(z2)),
+		That("range "+z+" "+z3+" &step=2").Puts(bigInt(z), bigInt(z2)),
+		// Big int count down.
+		That("range "+z3+" "+z).Puts(bigInt(z3), bigInt(z2), bigInt(z1)),
+		That("range "+z3+" "+z+" &step=-2").Puts(bigInt(z3), bigInt(z1)),
+		// Invalid big int step.
+		That("range &step=-"+z+" 10").
+			Throws(errs.BadValue{What: "step", Valid: "positive", Actual: "-" + z}),
+		That("range &step="+z+" 10 0").
+			Throws(errs.BadValue{What: "step", Valid: "negative", Actual: z}),
+		thatOutputErrorIsBubbled("range "+z+" "+z1),
+
+		// Rational count up.
+		That("range 23/10").Puts(0, 1, 2),
+		That("range 1/10 23/10").Puts(
+			big.NewRat(1, 10), big.NewRat(11, 10), big.NewRat(21, 10)),
+		That("range 23/10 1/10").Puts(
+			big.NewRat(23, 10), big.NewRat(13, 10), big.NewRat(3, 10)),
+		That("range 1/10 9/10 &step=3/10").Puts(
+			big.NewRat(1, 10), big.NewRat(4, 10), big.NewRat(7, 10)),
+		// Rational count down.
+		That("range 9/10 0/10 &step=-3/10").Puts(
+			big.NewRat(9, 10), big.NewRat(6, 10), big.NewRat(3, 10)),
+		// Invalid rational step.
+		That("range &step=-1/2 10").
+			Throws(errs.BadValue{What: "step", Valid: "positive", Actual: "-1/2"}),
+		That("range &step=1/2 10 0").
+			Throws(errs.BadValue{What: "step", Valid: "negative", Actual: "1/2"}),
+		thatOutputErrorIsBubbled("range 1/2 3/2"),
+
+		// Float64 count up.
+		That("range 1.2").Puts(0.0, 1.0),
+		That("range &step=0.5 1 3").Puts(1.0, 1.5, 2.0, 2.5),
+		// Float64 count down.
+		That("range 1.2 -1.2").Puts(1.2, Approximately(0.2), Approximately(-0.8)),
+		That("range &step=-0.5 3 1").Puts(3.0, 2.5, 2.0, 1.5),
+		// Near maxDenseIntInFloat.
+		That("range "+args(maxDenseIntInFloat-2, "+inf")).
+			Puts(maxDenseIntInFloat-2, maxDenseIntInFloat-1, maxDenseIntInFloat),
+		That("range "+args(maxDenseIntInFloat, maxDenseIntInFloat-2)).
+			Puts(maxDenseIntInFloat, maxDenseIntInFloat-1),
+		// Invalid float64 step.
+		That("range &step=-0.5 10").
+			Throws(errs.BadValue{What: "step", Valid: "positive", Actual: "-0.5"}),
+		That("range &step=0.5 10 0").
+			Throws(errs.BadValue{What: "step", Valid: "negative", Actual: "0.5"}),
+		thatOutputErrorIsBubbled("range 1.2"),
 	)
 }
 
@@ -245,6 +350,10 @@ func bigRat(s string) *big.Rat {
 	return z
 }
 
-func args(s ...string) string {
+func args(vs ...any) string {
+	s := make([]string, len(vs))
+	for i, v := range vs {
+		s[i] = vals.ToString(v)
+	}
 	return strings.Join(s, " ")
 }

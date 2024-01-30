@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -63,7 +64,9 @@ var runeMatchers = map[string]func(rune) bool{
 	"upper":   unicode.IsUpper,
 }
 
-func (gp globPattern) Index(k interface{}) (interface{}, error) {
+func (gp globPattern) Kind() string { return "glob-pattern" }
+
+func (gp globPattern) Index(k any) (any, error) {
 	modifierv, ok := k.(string)
 	if !ok {
 		return nil, ErrModifierMustBeString
@@ -122,7 +125,7 @@ func (gp globPattern) Index(k interface{}) (interface{}, error) {
 				return nil, badRangeExpr
 			}
 		} else {
-			return nil, fmt.Errorf("unknown modifier %s", vals.Repr(modifierv, vals.NoPretty))
+			return nil, fmt.Errorf("unknown modifier %s", vals.ReprPlain(modifierv))
 		}
 		err := gp.addMatcher(matcher)
 		return gp, err
@@ -130,11 +133,14 @@ func (gp globPattern) Index(k interface{}) (interface{}, error) {
 	return gp, nil
 }
 
-func (gp globPattern) Concat(v interface{}) (interface{}, error) {
+func (gp globPattern) Concat(v any) (any, error) {
 	switch rhs := v.(type) {
 	case string:
-		gp.append(stringToSegments(rhs)...)
-		return gp, nil
+		var segs []glob.Segment
+		segs = append(segs, gp.Segments...)
+		segs = append(segs, stringToSegments(rhs)...)
+		return globPattern{Pattern: glob.Pattern{Segments: segs}, Flags: gp.Flags,
+			Buts: gp.Buts, TypeCb: gp.TypeCb}, nil
 	case globPattern:
 		// We know rhs contains exactly one segment.
 		gp.append(rhs.Segments[0])
@@ -153,7 +159,7 @@ func (gp globPattern) Concat(v interface{}) (interface{}, error) {
 	return nil, vals.ErrConcatNotImplemented
 }
 
-func (gp globPattern) RConcat(v interface{}) (interface{}, error) {
+func (gp globPattern) RConcat(v any) (any, error) {
 	switch lhs := v.(type) {
 	case string:
 		segs := stringToSegments(lhs)
@@ -226,16 +232,16 @@ func stringToSegments(s string) []glob.Segment {
 	return segs
 }
 
-func doGlob(gp globPattern, abort <-chan struct{}) ([]interface{}, error) {
+func doGlob(ctx context.Context, gp globPattern) ([]any, error) {
 	but := make(map[string]struct{})
 	for _, s := range gp.Buts {
 		but[s] = struct{}{}
 	}
 
-	vs := make([]interface{}, 0)
+	vs := make([]any, 0)
 	if !gp.Glob(func(pathInfo glob.PathInfo) bool {
 		select {
-		case <-abort:
+		case <-ctx.Done():
 			logger.Println("glob aborted")
 			return false
 		default:

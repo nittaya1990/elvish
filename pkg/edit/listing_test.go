@@ -8,6 +8,68 @@ import (
 	"src.elv.sh/pkg/ui"
 )
 
+func TestListingBuiltins(t *testing.T) {
+	// Use the custom listing mode since it doesn't require special setup. The
+	// builtins work the same across all listing modes.
+
+	f := setup(t)
+	evals(f.Evaler,
+		`fn item {|x| put [&to-show=$x &to-accept=$x &to-filter=$x] }`,
+		`edit:listing:start-custom [(item 1) (item 2) (item 3)]`)
+	buf1 := f.MakeBuffer(
+		"~> \n",
+		" LISTING  ", Styles,
+		"********* ", term.DotHere, "\n",
+		"1                                                 ", Styles,
+		"++++++++++++++++++++++++++++++++++++++++++++++++++",
+		"2                                                 \n",
+		"3                                                 ",
+	)
+	f.TTYCtrl.TestBuffer(t, buf1)
+
+	evals(f.Evaler, "edit:listing:down", "edit:redraw")
+	buf2 := f.MakeBuffer(
+		"~> \n",
+		" LISTING  ", Styles,
+		"********* ", term.DotHere, "\n",
+		"1                                                 \n",
+		"2                                                 \n", Styles,
+		"++++++++++++++++++++++++++++++++++++++++++++++++++",
+		"3                                                 ",
+	)
+	f.TTYCtrl.TestBuffer(t, buf2)
+
+	evals(f.Evaler, "edit:listing:down", "edit:redraw")
+	buf3 := f.MakeBuffer(
+		"~> \n",
+		" LISTING  ", Styles,
+		"********* ", term.DotHere, "\n",
+		"1                                                 \n",
+		"2                                                 \n",
+		"3                                                 ", Styles,
+		"++++++++++++++++++++++++++++++++++++++++++++++++++",
+	)
+	f.TTYCtrl.TestBuffer(t, buf3)
+
+	evals(f.Evaler, "edit:listing:down", "edit:redraw")
+	f.TTYCtrl.TestBuffer(t, buf3)
+
+	evals(f.Evaler, "edit:listing:down-cycle", "edit:redraw")
+	f.TTYCtrl.TestBuffer(t, buf1)
+
+	evals(f.Evaler, "edit:listing:up", "edit:redraw")
+	f.TTYCtrl.TestBuffer(t, buf1)
+
+	evals(f.Evaler, "edit:listing:up-cycle", "edit:redraw")
+	f.TTYCtrl.TestBuffer(t, buf3)
+
+	evals(f.Evaler, "edit:listing:page-up", "edit:redraw")
+	f.TTYCtrl.TestBuffer(t, buf1)
+
+	evals(f.Evaler, "edit:listing:page-down", "edit:redraw")
+	f.TTYCtrl.TestBuffer(t, buf3)
+}
+
 // Smoke tests for individual addons.
 
 func TestHistlistAddon(t *testing.T) {
@@ -22,7 +84,9 @@ func TestHistlistAddon(t *testing.T) {
 	f.TestTTY(t,
 		"~> \n",
 		" HISTORY (dedup on)  ", Styles,
-		"******************** ", term.DotHere, "\n",
+		"******************** ", term.DotHere,
+		"                 Ctrl-D dedup\n", Styles,
+		"                 ++++++      ",
 		"   2 echo\n",
 		"   3 ls\n",
 		"   4 LS                                           ", Styles,
@@ -33,7 +97,9 @@ func TestHistlistAddon(t *testing.T) {
 	f.TestTTY(t,
 		"~> \n",
 		" HISTORY  ", Styles,
-		"********* ", term.DotHere, "\n",
+		"********* ", term.DotHere,
+		"                            Ctrl-D dedup\n", Styles,
+		"                            ++++++      ",
 		"   1 ls\n",
 		"   2 echo\n",
 		"   3 ls\n",
@@ -48,7 +114,9 @@ func TestHistlistAddon(t *testing.T) {
 	f.TestTTY(t,
 		"~> \n",
 		" HISTORY (dedup on)  l", Styles,
-		"********************  ", term.DotHere, "\n",
+		"********************  ", term.DotHere,
+		"                Ctrl-D dedup\n", Styles,
+		"                ++++++      ",
 		"   3 ls\n",
 		"   4 LS                                           ", Styles,
 		"++++++++++++++++++++++++++++++++++++++++++++++++++",
@@ -59,7 +127,9 @@ func TestHistlistAddon(t *testing.T) {
 	f.TestTTY(t,
 		"~> \n",
 		" HISTORY (dedup on)  L", Styles,
-		"********************  ", term.DotHere, "\n",
+		"********************  ", term.DotHere,
+		"                Ctrl-D dedup\n", Styles,
+		"                ++++++      ",
 		"   4 LS                                           ", Styles,
 		"++++++++++++++++++++++++++++++++++++++++++++++++++",
 	)
@@ -87,8 +157,8 @@ func TestCustomListing_PassingList(t *testing.T) {
 	f := setup(t)
 
 	evals(f.Evaler,
-		`items = [[&to-filter=1 &to-accept=echo &to-show=echo]
-		          [&to-filter=2  &to-accept=put &to-show=(styled put green)]]`,
+		`var items = [[&to-filter=1 &to-accept=echo &to-show=echo]
+		              [&to-filter=2  &to-accept=put &to-show=(styled put green)]]`,
 		`edit:listing:start-custom $items &accept=$edit:insert-at-dot~ &caption=A`)
 	f.TestTTY(t,
 		"~> \n",
@@ -113,7 +183,7 @@ func TestCustomListing_PassingValueCallback(t *testing.T) {
 	f := setup(t)
 
 	evals(f.Evaler,
-		`f = [q]{ put [&to-accept='q '$q &to-show=(styled 'q '$q blue)] }`,
+		`var f = {|q| put [&to-accept='q '$q &to-show=(styled 'q '$q blue)] }`,
 		`edit:listing:start-custom $f &caption=A`)
 	// Query.
 	f.TTYCtrl.Inject(term.K('x'))
@@ -133,7 +203,7 @@ func TestCustomListing_PassingBytesCallback(t *testing.T) {
 	f := setup(t)
 
 	evals(f.Evaler,
-		`f = [q]{ echo '# '$q }`,
+		`var f = {|q| echo '# '$q }`,
 		`edit:listing:start-custom $f &accept=$edit:insert-at-dot~ &caption=A `+
 			`&binding=(edit:binding-table [&Ctrl-X=$edit:listing:accept~])`)
 	// Test that the query function is used to generate candidates. Also test

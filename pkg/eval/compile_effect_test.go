@@ -2,11 +2,11 @@ package eval_test
 
 import (
 	"testing"
+	"time"
 
 	. "src.elv.sh/pkg/eval"
 	"src.elv.sh/pkg/eval/errs"
 	. "src.elv.sh/pkg/eval/evaltest"
-	"src.elv.sh/pkg/eval/vals"
 	"src.elv.sh/pkg/mods/file"
 	"src.elv.sh/pkg/testutil"
 )
@@ -18,35 +18,81 @@ func TestChunk(t *testing.T) {
 		// Outputs of pipelines in a chunk are concatenated
 		That("put x; put y; put z").Puts("x", "y", "z"),
 		// A failed pipeline cause the whole chunk to fail
-		That("put a; e:false; put b").Puts("a").Throws(AnyError),
+		That("put a; e:false; put b").Puts("a").Throws(ErrorWithType(ExternalCmdExit{})),
 	)
 }
 
 func TestPipeline(t *testing.T) {
-	setup := func(ev *Evaler) {
-		ev.AddGlobal(NsBuilder{}.AddNs("file", file.Ns).Ns())
-	}
-	TestWithSetup(t, setup,
+	Test(t,
 		// Pure byte pipeline
 		That(`echo "Albert\nAllan\nAlbraham\nBerlin" | sed s/l/1/g | grep e`).
 			Prints("A1bert\nBer1in\n"),
 		// Pure value pipeline
-		That(`put 233 42 19 | each [x]{+ $x 10}`).Puts(243, 52, 29),
+		That(`put 233 42 19 | each {|x|+ $x 10}`).Puts(243, 52, 29),
 		// Pipeline draining.
 		That(`range 100 | put x`).Puts("x"),
-		// Background pipeline.
-		That(
-			"notify-bg-job-success = $false",
-			"p = (pipe)",
-			"{ print foo > $p; file:close $p[w] }&",
-			"slurp < $p",
-			"file:close $p[r]").Puts("foo"),
 		// TODO: Add a useful hybrid pipeline sample
 	)
 }
 
+func TestPipeline_BgJob(t *testing.T) {
+	setup := func(ev *Evaler) {
+		ev.ExtendGlobal(BuildNs().AddNs("file", file.Ns))
+	}
+
+	notes1 := make(chan string)
+	notes2 := make(chan string)
+
+	putNote := func(ch chan<- string) func(*Evaler) {
+		return func(ev *Evaler) {
+			ev.BgJobNotify = func(note string) { ch <- note }
+		}
+	}
+	verifyNote := func(notes <-chan string, wantNote string) func(t *testing.T) {
+		return func(t *testing.T) {
+			select {
+			case note := <-notes:
+				if note != wantNote {
+					t.Errorf("got note %q, want %q", note, wantNote)
+				}
+			case <-time.After(testutil.Scaled(100 * time.Millisecond)):
+				t.Errorf("timeout waiting for notification")
+			}
+		}
+	}
+
+	TestWithEvalerSetup(t, setup,
+		That(
+			"set notify-bg-job-success = $false",
+			"var p = (file:pipe)",
+			"{ print foo > $p; file:close $p[w] }&",
+			"slurp < $p; file:close $p[r]").
+			Puts("foo"),
+		// Notification
+		That(
+			"set notify-bg-job-success = $true",
+			"var p = (file:pipe)",
+			"fn f { file:close $p[w] }",
+			"f &",
+			"slurp < $p; file:close $p[r]").
+			Puts("").
+			WithSetup(putNote(notes1)).
+			Passes(verifyNote(notes1, "job f & finished")),
+		// Notification, with exception
+		That(
+			"set notify-bg-job-success = $true",
+			"var p = (file:pipe)",
+			"fn f { file:close $p[w]; fail foo }",
+			"f &",
+			"slurp < $p; file:close $p[r]").
+			Puts("").
+			WithSetup(putNote(notes2)).
+			Passes(verifyNote(notes2, "job f & finished, errors = foo")),
+	)
+}
+
 func TestPipeline_ReaderGone(t *testing.T) {
-	// See UNIX-only tests in compile_effect_unix_test.go.
+	// See Unix-only tests in compile_effect_unix_test.go.
 	Test(t,
 		// Internal commands writing to byte output raises ReaderGone when the
 		// reader is exited, which is then suppressed.
@@ -79,9 +125,9 @@ func TestCommand(t *testing.T) {
 			errs.BadValue{
 				What:   "command",
 				Valid:  "callable or string containing slash",
-				Actual: "list"},
+				Actual: "[]"},
 			"[]"),
-		// Command errors when when argument errors.
+		// Command errors when argument errors.
 		That("put [][1]").Throws(ErrorWithType(errs.OutOfRange{}), "[][1]"),
 		// Command errors when an option key is not string.
 		That("put &[]=[]").Throws(
@@ -103,98 +149,52 @@ func TestCommand_Special(t *testing.T) {
 	)
 }
 
-func TestCommand_Assignment(t *testing.T) {
-	// NOTE: TestClosure has more tests for the interaction between assignment
-	// and variable scoping.
-
+func TestCommand_LegacyTemporaryAssignment(t *testing.T) {
 	Test(t,
-		// Spacey assignment.
-		That("a = foo; put $a").Puts("foo"),
-		That("a b = foo bar; put $a $b").Puts("foo", "bar"),
-		That("a @b = 2 3 foo; put $a $b").Puts("2", vals.MakeList("3", "foo")),
-		That("a @b c = 1 2 3 4; put $a $b $c").
-			Puts("1", vals.MakeList("2", "3"), "4"),
-		That("a @b c = 1 2; put $a $b $c").Puts("1", vals.EmptyList, "2"),
-		That("@a = ; put $a").Puts(vals.EmptyList),
-
-		// List element assignment
-		That("var li = [foo bar]; set li[0] = 233; put $@li").Puts("233", "bar"),
-		// Variable in list assignment must already be defined. Regression test
-		// for b.elv.sh/889.
-		That("set foobarlorem[0] = a").DoesNotCompile(),
-		// Map element assignment
-		That("var di = [&k=v]; set di[k] = lorem; set di[k2] = ipsum",
-			"put $di[k] $di[k2]").Puts("lorem", "ipsum"),
-		That("var d = [&a=[&b=v]]; put $d[a][b]; set d[a][b] = u; put $d[a][b]").
-			Puts("v", "u"),
-
-		// Temporary assignment.
 		That("var a b = alice bob; {a,@b}=(put amy ben) put $a $@b; put $a $b").
-			Puts("amy", "ben", "alice", "bob"),
+			Puts("amy", "ben", "alice", "bob").PrintsStderrWith("deprecated"),
 		// Temporary assignment of list element.
-		That("l = [a]; l[0]=x put $l[0]; put $l[0]").Puts("x", "a"),
+		That("var l = [a]; l[0]=x put $l[0]; put $l[0]").
+			Puts("x", "a").PrintsStderrWith("deprecated"),
 		// Temporary assignment of map element.
-		That("m = [&k=v]; m[k]=v2 put $m[k]; put $m[k]").Puts("v2", "v"),
+		That("var m = [&k=v]; m[k]=v2 put $m[k]; put $m[k]").
+			Puts("v2", "v").PrintsStderrWith("deprecated"),
 		// Temporary assignment before special form.
-		That("li=[foo bar] for x $li { put $x }").Puts("foo", "bar"),
+		That("li=[foo bar] for x $li { put $x }").
+			Puts("foo", "bar").PrintsStderrWith("deprecated"),
 		// Multiple LHSs in temporary assignments.
-		That("{a b}={foo bar} put $a $b").Puts("foo", "bar"),
-		That("@a=(put a b) put $@a").Puts("a", "b"),
-		That("{a,@b}=(put a b c) put $@b").Puts("b", "c"),
-		// Spacey assignment with temporary assignment
-		That("x = 1; x=2 y = (+ 1 $x); put $x $y").Puts("1", 3),
+		That("{a b}={foo bar} put $a $b").
+			Puts("foo", "bar").PrintsStderrWith("deprecated"),
+		That("@a=(put a b) put $@a").
+			Puts("a", "b").PrintsStderrWith("deprecated"),
+		That("{a,@b}=(put a b c) put $@b").
+			Puts("b", "c").PrintsStderrWith("deprecated"),
 		// Using syntax of temporary assignment for non-temporary assignment no
 		// longer compiles
-		That("x=y").DoesNotCompile(),
-
-		// Concurrently creating a new variable and accessing existing variable.
-		// Run with "go test -race".
-		That("x = 1", "put $x | y = (all)").DoesNothing(),
-		That("nop (x = 1) | nop").DoesNothing(),
-
-		// Assignment errors when the RHS errors.
-		That("x = [][1]").Throws(ErrorWithType(errs.OutOfRange{}), "[][1]"),
-		// Assignment to read-only var is an error.
-		That("nil = 1").Throws(errs.SetReadOnlyVar{VarName: "nil"}, "nil"),
-		That("a true b = 1 2 3").Throws(errs.SetReadOnlyVar{VarName: "true"}, "true"),
-		That("@true = 1").Throws(errs.SetReadOnlyVar{VarName: "@true"}, "@true"),
-		// A readonly var as a target for the `except` clause should error.
-		That("try { fail reason } except nil { }").Throws(errs.SetReadOnlyVar{VarName: "nil"}, "nil"),
-		That("try { fail reason } except x { }").DoesNothing(),
-		// Evaluation of the assignability occurs at run-time so, if no exception is raised, this
-		// otherwise invalid use of `nil` is okay.
-		That("try { } except nil { }").DoesNothing(),
-		// Arity mismatch.
-		That("x = 1 2").Throws(
-			errs.ArityMismatch{What: "assignment right-hand-side",
-				ValidLow: 1, ValidHigh: 1, Actual: 2},
-			"x = 1 2"),
-		That("x y = 1").Throws(
-			errs.ArityMismatch{What: "assignment right-hand-side",
-				ValidLow: 2, ValidHigh: 2, Actual: 1},
-			"x y = 1"),
-		That("x y @z = 1").Throws(
-			errs.ArityMismatch{What: "assignment right-hand-side",
-				ValidLow: 2, ValidHigh: -1, Actual: 1},
-			"x y @z = 1"),
-
-		// Trying to add a new name in a namespace throws an exception.
-		// Regression test for #1214.
-		That("ns: = (ns [&]); ns:a = b").Throws(NoSuchVariable("ns:a"), "ns:a = b"),
+		That("x=y").DoesNotCompile(
+			`using the syntax of temporary assignment for non-temporary assignment is no longer supported; use "var" or "set" instead`),
 	)
+}
+
+func TestCommand_LegacyTemporaryAssignmentSyntaxIsDeprecated(t *testing.T) {
+	testCompileTimeDeprecation(t, "a=foo echo $a",
+		"the legacy temporary assignment syntax is deprecated", 18)
 }
 
 func TestCommand_Redir(t *testing.T) {
 	setup := func(ev *Evaler) {
-		ev.AddGlobal(NsBuilder{}.AddNs("file", file.Ns).Ns())
+		ev.ExtendGlobal(BuildNs().AddNs("file", file.Ns))
 	}
 	testutil.InTempDir(t)
 
-	TestWithSetup(t, setup,
+	TestWithEvalerSetup(t, setup,
 		// Output and input redirection.
 		That("echo 233 > out1", " slurp < out1").Puts("233\n"),
 		// Append.
 		That("echo 1 > out; echo 2 >> out; slurp < out").Puts("1\n2\n"),
+		// Read and write.
+		// TODO: Add a meaningful use case that uses both read and write.
+		That("echo 233 <> out1", " slurp < out1").Puts("233\n"),
 
 		// Redirections from special form.
 		That(`for x [lorem ipsum] { echo $x } > out2`, `slurp < out2`).
@@ -204,18 +204,19 @@ func TestCommand_Redir(t *testing.T) {
 		That(`{ echo foobar >&2 } 2> out3`, `slurp < out3`).
 			Puts("foobar\n"),
 		// Using named FDs as source and destination.
+		That("echo 233 stdout> out1", " slurp stdin< out1").Puts("233\n"),
 		That(`{ echo foobar >&stderr } stderr> out4`, `slurp < out4`).
 			Puts("foobar\n"),
 		// Using a new FD as source throws an exception.
-		That(`echo foo >&4`).Throws(AnyError),
+		That(`echo foo >&4`).Throws(InvalidFD{FD: 4}),
 		// Using a new FD as destination is OK, and makes it available.
 		That(`{ echo foo >&4 } 4>out5`, `slurp < out5`).Puts("foo\n"),
 
 		// Redirections from File object.
-		That(`echo haha > out3`, `f = (fopen out3)`, `slurp <$f`, ` fclose $f`).
+		That(`echo haha > out3`, `var f = (file:open out3)`, `slurp <$f`, ` file:close $f`).
 			Puts("haha\n"),
 		// Redirections from Pipe object.
-		That(`p = (pipe); echo haha > $p; file:close $p[w]; slurp < $p; file:close $p[r]`).
+		That(`var p = (file:pipe); echo haha > $p; file:close $p[w]; slurp < $p; file:close $p[r]`).
 			Puts("haha\n"),
 
 		// We can't read values from a file and shouldn't hang when iterating
@@ -225,9 +226,9 @@ func TestCommand_Redir(t *testing.T) {
 		That("echo def > bytes", "only-values < bytes | count").Puts(0),
 
 		// Writing value output to file throws an exception.
-		That("put foo >a").Throws(ErrNoValueOutput, "put foo >a"),
+		That("put foo >a").Throws(ErrPortDoesNotSupportValueOutput, "put foo >a"),
 		// Writing value output to closed port throws an exception too.
-		That("put foo >&-").Throws(ErrNoValueOutput, "put foo >&-"),
+		That("put foo >&-").Throws(ErrPortDoesNotSupportValueOutput, "put foo >&-"),
 
 		// Invalid redirection destination.
 		That("echo []> test").Throws(
@@ -245,8 +246,23 @@ func TestCommand_Redir(t *testing.T) {
 		That("echo > []").Throws(
 			errs.BadValue{
 				What:  "redirection source",
-				Valid: "string, file or pipe", Actual: "list"},
+				Valid: "string, file or map", Actual: "list"},
 			"[]"),
+		// Invalid map for redirection.
+		That("echo < [&]").Throws(
+			errs.BadValue{
+				What:  "map for input redirection",
+				Valid: "map with file in the 'r' field", Actual: "[&]"},
+			"[&]"),
+		That("echo > [&]").Throws(
+			errs.BadValue{
+				What:  "map for output redirection",
+				Valid: "map with file in the 'w' field", Actual: "[&]"},
+			"[&]"),
+
+		// Exception when evaluating source or destination.
+		That("echo > (fail foo)").Throws(FailError{"foo"}, "fail foo"),
+		That("echo (fail foo)> file").Throws(FailError{"foo"}, "fail foo"),
 	)
 }
 

@@ -26,10 +26,6 @@ type Store interface {
 	AddDir(dir string, incFactor float64) error
 	DelDir(dir string) error
 	Dirs(blacklist map[string]struct{}) ([]Dir, error)
-
-	SharedVar(name string) (string, error)
-	SetSharedVar(name, value string) error
-	DelSharedVar(name string) error
 }
 
 // Dir is an entry in the directory history.
@@ -38,8 +34,12 @@ type Dir struct {
 	Score float64
 }
 
+func (Dir) IsStructMap() {}
+
 // Cmd is an entry in the command history.
 type Cmd struct {
 	Text string
 	Seq  int
 }
+
+func (Cmd) IsStructMap() {}

@@ -1,5 +1,4 @@
-//go:build !windows && !plan9
-// +build !windows,!plan9
+//go:build unix
 
 package term
 
@@ -111,17 +110,17 @@ func readEvent(rd byteReaderWithTimeout) (event Event, err error) {
 				// Mouse event.
 				cb := readRune()
 				if cb == runeEndOfSeq {
-					badSeq("Incomplete mouse event")
+					badSeq("incomplete mouse event")
 					return
 				}
 				cx := readRune()
 				if cx == runeEndOfSeq {
-					badSeq("Incomplete mouse event")
+					badSeq("incomplete mouse event")
 					return
 				}
 				cy := readRune()
 				if cy == runeEndOfSeq {
-					badSeq("Incomplete mouse event")
+					badSeq("incomplete mouse event")
 					return
 				}
 				down := true
@@ -148,7 +147,7 @@ func readEvent(rd byteReaderWithTimeout) (event Event, err error) {
 					nums[cur] = nums[cur]*10 + int(r-'0')
 				case r == runeEndOfSeq:
 					// Incomplete CSI.
-					badSeq("Incomplete CSI")
+					badSeq("incomplete CSI")
 					return
 				default: // Treat as a terminator.
 					break CSISeq
@@ -279,7 +278,7 @@ var g3Seq = map[rune]ui.Key{
 // expressible using the escape sequences described below.
 
 // CSI-style key sequences identified by the last rune. For instance, \e[A is
-// Up. When modified, two numerical arguments are added, the first always beging
+// Up. When modified, two numerical arguments are added, the first always being
 // 1 and the second identifying the modifier. For instance, \e[1;5A is Ctrl-Up.
 var csiSeqByLast = map[rune]ui.Key{
 	// xterm, urxvt, tmux

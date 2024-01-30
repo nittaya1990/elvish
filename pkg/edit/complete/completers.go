@@ -1,24 +1,19 @@
 package complete
 
 import (
-	"strings"
-
 	"src.elv.sh/pkg/diag"
 	"src.elv.sh/pkg/eval"
 	"src.elv.sh/pkg/parse"
+	"src.elv.sh/pkg/parse/np"
 )
 
-var parent = parse.Parent
-
-var completers = []completer{
+var completers = []func(np.Path, *eval.Evaler, Config) (*context, []RawItem, error){
 	completeCommand,
 	completeIndex,
 	completeRedir,
 	completeVariable,
 	completeArg,
 }
-
-type completer func(parse.Node, Config) (*context, []RawItem, error)
 
 type context struct {
 	name     string
@@ -27,161 +22,124 @@ type context struct {
 	interval diag.Ranging
 }
 
-func completeArg(n parse.Node, cfg Config) (*context, []RawItem, error) {
-	ev := cfg.PureEvaler
-	if sep, ok := n.(*parse.Sep); ok {
-		if form, ok := parent(sep).(*parse.Form); ok && form.Head != nil {
-			// Case 1: starting a new argument.
-			ctx := &context{"argument", "", parse.Bareword, range0(n.Range().To)}
-			args := purelyEvalForm(form, "", n.Range().To, ev)
-			items, err := cfg.ArgGenerator(args)
-			return ctx, items, err
-		}
-	}
-	if primary, ok := n.(*parse.Primary); ok {
-		if compound, seed := primaryInSimpleCompound(primary, ev); compound != nil {
-			if form, ok := parent(compound).(*parse.Form); ok {
-				if form.Head != nil && form.Head != compound {
-					// Case 2: in an incomplete argument.
-					ctx := &context{"argument", seed, primary.Type, compound.Range()}
-					args := purelyEvalForm(form, seed, compound.Range().From, ev)
-					items, err := cfg.ArgGenerator(args)
-					return ctx, items, err
-				}
-			}
-		}
-	}
-	return nil, nil, errNoCompletion
-}
-
-func completeCommand(n parse.Node, cfg Config) (*context, []RawItem, error) {
-	ev := cfg.PureEvaler
-	generateForEmpty := func(pos int) (*context, []RawItem, error) {
-		ctx := &context{"command", "", parse.Bareword, range0(pos)}
-		items, err := generateCommands("", ev)
+func completeArg(p np.Path, ev *eval.Evaler, cfg Config) (*context, []RawItem, error) {
+	var form *parse.Form
+	if p.Match(np.Sep, np.Store(&form)) && form.Head != nil {
+		// Case 1: starting a new argument.
+		ctx := &context{"argument", "", parse.Bareword, range0(p[0].Range().To)}
+		args := purelyEvalForm(form, "", p[0].Range().To, ev)
+		items, err := generateArgs(args, ev, p, cfg)
 		return ctx, items, err
 	}
 
-	if is(n, aChunk) {
+	var expr np.SimpleExprData
+	if p.Match(np.SimpleExpr(&expr, ev), np.Store(&form)) && form.Head != nil && form.Head != expr.Compound {
+		// Case 2: in an incomplete argument.
+		ctx := &context{"argument", expr.Value, expr.PrimarType, expr.Compound.Range()}
+		args := purelyEvalForm(form, expr.Value, expr.Compound.Range().From, ev)
+		items, err := generateArgs(args, ev, p, cfg)
+		return ctx, items, err
+	}
+
+	return nil, nil, errNoCompletion
+}
+
+func completeCommand(p np.Path, ev *eval.Evaler, cfg Config) (*context, []RawItem, error) {
+	generateForEmpty := func(pos int) (*context, []RawItem, error) {
+		ctx := &context{"command", "", parse.Bareword, range0(pos)}
+		items, err := generateCommands("", ev, p)
+		return ctx, items, err
+	}
+
+	if p.Match(np.Chunk) {
 		// Case 1: The leaf is a Chunk. That means that the chunk is empty
 		// (nothing entered at all) and it is a correct place for completing a
 		// command.
-		return generateForEmpty(n.Range().To)
+		return generateForEmpty(p[0].Range().To)
 	}
-	if is(n, aSep) {
-		parent := parent(n)
-		switch {
-		case is(parent, aChunk), is(parent, aPipeline):
-			// Case 2: Just after a newline, semicolon, or a pipe.
-			return generateForEmpty(n.Range().To)
-		case is(parent, aPrimary):
-			ptype := parent.(*parse.Primary).Type
-			if ptype == parse.OutputCapture || ptype == parse.ExceptionCapture {
-				// Case 3: At the beginning of output or exception capture.
-				return generateForEmpty(n.Range().To)
-			}
+	if p.Match(np.Sep, np.Chunk) || p.Match(np.Sep, np.Pipeline) {
+		// Case 2: Just after a newline, semicolon, or a pipe.
+		return generateForEmpty(p[0].Range().To)
+	}
+
+	var primary *parse.Primary
+	if p.Match(np.Sep, np.Store(&primary)) {
+		t := primary.Type
+		if t == parse.OutputCapture || t == parse.ExceptionCapture || t == parse.Lambda {
+			// Case 3: At the beginning of output, exception capture or lambda.
+			//
+			// TODO: Don't trigger after "{|".
+			return generateForEmpty(p[0].Range().To)
 		}
 	}
 
-	if primary, ok := n.(*parse.Primary); ok {
-		if compound, seed := primaryInSimpleCompound(primary, ev); compound != nil {
-			if form, ok := parent(compound).(*parse.Form); ok {
-				if form.Head == compound {
-					// Case 4: At an already started command.
-					ctx := &context{
-						"command", seed, primary.Type, compound.Range()}
-					items, err := generateCommands(seed, ev)
-					return ctx, items, err
-				}
-			}
-		}
+	var expr np.SimpleExprData
+	var form *parse.Form
+	if p.Match(np.SimpleExpr(&expr, ev), np.Store(&form)) && form.Head == expr.Compound {
+		// Case 4: At an already started command.
+		ctx := &context{"command", expr.Value, expr.PrimarType, expr.Compound.Range()}
+		items, err := generateCommands(expr.Value, ev, p)
+		return ctx, items, err
 	}
+
 	return nil, nil, errNoCompletion
 }
 
 // NOTE: This now only supports a single level of indexing; for instance,
 // $a[<Tab> is supported, but $a[x][<Tab> is not.
-func completeIndex(n parse.Node, cfg Config) (*context, []RawItem, error) {
-	ev := cfg.PureEvaler
-	generateForEmpty := func(v interface{}, pos int) (*context, []RawItem, error) {
+func completeIndex(p np.Path, ev *eval.Evaler, cfg Config) (*context, []RawItem, error) {
+	generateForEmpty := func(v any, pos int) (*context, []RawItem, error) {
 		ctx := &context{"index", "", parse.Bareword, range0(pos)}
 		return ctx, generateIndices(v), nil
 	}
 
-	if is(n, aSep) {
-		if is(parent(n), aIndexing) {
-			// We are just after an opening bracket.
-			indexing := parent(n).(*parse.Indexing)
-			if len(indexing.Indices) == 1 {
-				if indexee := ev.PurelyEvalPrimary(indexing.Head); indexee != nil {
-					return generateForEmpty(indexee, n.Range().To)
-				}
-			}
-		}
-		if is(parent(n), aArray) {
-			array := parent(n)
-			if is(parent(array), aIndexing) {
-				// We are after an existing index and spaces.
-				indexing := parent(array).(*parse.Indexing)
-				if len(indexing.Indices) == 1 {
-					if indexee := ev.PurelyEvalPrimary(indexing.Head); indexee != nil {
-						return generateForEmpty(indexee, n.Range().To)
-					}
-				}
+	var indexing *parse.Indexing
+	if p.Match(np.Sep, np.Store(&indexing)) || p.Match(np.Sep, np.Array, np.Store(&indexing)) {
+		// We are at a new index, either directly after the opening bracket, or
+		// after an existing index and some spaces.
+		if len(indexing.Indices) == 1 {
+			if indexee := ev.PurelyEvalPrimary(indexing.Head); indexee != nil {
+				return generateForEmpty(indexee, p[0].Range().To)
 			}
 		}
 	}
 
-	if is(n, aPrimary) {
-		primary := n.(*parse.Primary)
-		compound, seed := primaryInSimpleCompound(primary, ev)
-		if compound != nil {
-			if is(parent(compound), aArray) {
-				array := parent(compound)
-				if is(parent(array), aIndexing) {
-					// We are just after an incomplete index.
-					indexing := parent(array).(*parse.Indexing)
-					if len(indexing.Indices) == 1 {
-						if indexee := ev.PurelyEvalPrimary(indexing.Head); indexee != nil {
-							ctx := &context{
-								"index", seed, primary.Type, compound.Range()}
-							return ctx, generateIndices(indexee), nil
-						}
-					}
-				}
-			}
-		}
-	}
-	return nil, nil, errNoCompletion
-}
-
-func completeRedir(n parse.Node, cfg Config) (*context, []RawItem, error) {
-	ev := cfg.PureEvaler
-	if is(n, aSep) {
-		if is(parent(n), aRedir) {
-			// Empty redirection target.
-			ctx := &context{"redir", "", parse.Bareword, range0(n.Range().To)}
-			items, err := generateFileNames("", false)
-			return ctx, items, err
-		}
-	}
-	if primary, ok := n.(*parse.Primary); ok {
-		if compound, seed := primaryInSimpleCompound(primary, ev); compound != nil {
-			if is(parent(compound), &parse.Redir{}) {
-				// Non-empty redirection target.
+	var expr np.SimpleExprData
+	if p.Match(np.SimpleExpr(&expr, ev), np.Array, np.Store(&indexing)) {
+		// We are just after an incomplete index.
+		if len(indexing.Indices) == 1 {
+			if indexee := ev.PurelyEvalPrimary(indexing.Head); indexee != nil {
 				ctx := &context{
-					"redir", seed, primary.Type, compound.Range()}
-				items, err := generateFileNames(seed, false)
-				return ctx, items, err
+					"index", expr.Value, expr.PrimarType, expr.Compound.Range()}
+				return ctx, generateIndices(indexee), nil
 			}
 		}
 	}
+
 	return nil, nil, errNoCompletion
 }
 
-func completeVariable(n parse.Node, cfg Config) (*context, []RawItem, error) {
-	ev := cfg.PureEvaler
-	primary, ok := n.(*parse.Primary)
+func completeRedir(p np.Path, ev *eval.Evaler, cfg Config) (*context, []RawItem, error) {
+	if p.Match(np.Sep, np.Redir) {
+		// Empty redirection target.
+		ctx := &context{"redir", "", parse.Bareword, range0(p[0].Range().To)}
+		items, err := generateFileNames("", false)
+		return ctx, items, err
+	}
+
+	var expr np.SimpleExprData
+	if p.Match(np.SimpleExpr(&expr, ev), np.Redir) {
+		// Non-empty redirection target.
+		ctx := &context{"redir", expr.Value, expr.PrimarType, expr.Compound.Range()}
+		items, err := generateFileNames(expr.Value, false)
+		return ctx, items, err
+	}
+
+	return nil, nil, errNoCompletion
+}
+
+func completeVariable(p np.Path, ev *eval.Evaler, cfg Config) (*context, []RawItem, error) {
+	primary, ok := p[0].(*parse.Primary)
 	if !ok || primary.Type != parse.Variable {
 		return nil, nil, errNoCompletion
 	}
@@ -195,25 +153,35 @@ func completeVariable(n parse.Node, cfg Config) (*context, []RawItem, error) {
 		diag.Ranging{From: begin, To: primary.Range().To}}
 
 	var items []RawItem
-	ev.EachVariableInNs(ns, func(varname string) {
+	eachVariableInNs(ev, p, ns, func(varname string) {
 		items = append(items, noQuoteItem(parse.QuoteVariableName(varname)))
 	})
-
-	ev.EachNs(func(thisNs string) {
-		// This is to match namespaces that are "nested" under the current
-		// namespace.
-		if hasProperPrefix(thisNs, ns) {
-			items = append(items, noQuoteItem(parse.QuoteVariableName(thisNs[len(ns):])))
-		}
-	})
+	if ns == "" {
+		items = append(items, noQuoteItem("e:"), noQuoteItem("E:"))
+	}
 
 	return ctx, items, nil
 }
 
-func range0(pos int) diag.Ranging {
-	return diag.Ranging{From: pos, To: pos}
+func purelyEvalForm(form *parse.Form, seed string, upto int, ev *eval.Evaler) []string {
+	// Find out head of the form and preceding arguments.
+	// If form.Head is not a simple compound, head will be "", just what we want.
+	head, _ := ev.PurelyEvalPartialCompound(form.Head, -1)
+	words := []string{head}
+	for _, compound := range form.Args {
+		if compound.Range().From >= upto {
+			break
+		}
+		if arg, ok := ev.PurelyEvalCompound(compound); ok {
+			// TODO(xiaq): Arguments that are not simple compounds are simply ignored.
+			words = append(words, arg)
+		}
+	}
+
+	words = append(words, seed)
+	return words
 }
 
-func hasProperPrefix(s, p string) bool {
-	return len(s) > len(p) && strings.HasPrefix(s, p)
+func range0(pos int) diag.Ranging {
+	return diag.Ranging{From: pos, To: pos}
 }

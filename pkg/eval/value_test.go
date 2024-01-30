@@ -9,7 +9,7 @@ import (
 )
 
 var reprTests = []struct {
-	v    interface{}
+	v    any
 	want string
 }{
 	{"233", "233"},
@@ -27,7 +27,7 @@ var reprTests = []struct {
 
 func TestRepr(t *testing.T) {
 	for _, test := range reprTests {
-		repr := vals.Repr(test.v, vals.NoPretty)
+		repr := vals.ReprPlain(test.v)
 		if repr != test.want {
 			t.Errorf("Repr = %s, want %s", repr, test.want)
 		}

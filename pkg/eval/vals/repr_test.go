@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	. "src.elv.sh/pkg/tt"
+	"src.elv.sh/pkg/tt"
 )
 
 type reprer struct{}
@@ -15,10 +15,8 @@ func (reprer) Repr(int) string { return "<reprer>" }
 
 type nonReprer struct{}
 
-func repr(a interface{}) string { return Repr(a, NoPretty) }
-
-func TestRepr(t *testing.T) {
-	Test(t, Fn("repr", repr), Table{
+func TestReprPlain(t *testing.T) {
+	tt.Test(t, ReprPlain,
 		Args(nil).Rets("$nil"),
 
 		Args(false).Rets("$false"),
@@ -27,7 +25,7 @@ func TestRepr(t *testing.T) {
 		Args("foo").Rets("foo"),
 
 		Args(1).Rets("(num 1)"),
-		Args(bigInt(z)).Rets("(num " + z + ")"),
+		Args(bigInt(z)).Rets("(num "+z+")"),
 		Args(big.NewRat(1, 2)).Rets("(num 1/2)"),
 		Args(1.0).Rets("(num 1.0)"),
 		Args(1e10).Rets("(num 10000000000.0)"),
@@ -40,8 +38,28 @@ func TestRepr(t *testing.T) {
 
 		Args(EmptyMap).Rets("[&]"),
 		Args(MakeMap("foo", "bar")).Rets("[&foo=bar]"),
+		// Keys of the same type are sorted.
+		Args(MakeMap("b", "second", "a", "first", "c", "third")).
+			Rets("[&a=first &b=second &c=third]"),
+		Args(MakeMap(2, "second", 1, "first", 3, "third")).
+			Rets("[&(num 1)=first &(num 2)=second &(num 3)=third]"),
+		// Keys of mixed types tested in a different test.
 
 		Args(reprer{}).Rets("<reprer>"),
 		Args(nonReprer{}).Rets("<unknown {}>"),
-	})
+	)
+}
+
+func TestReprPlain_MapWithKeysOfMixedTypes(t *testing.T) {
+	m := MakeMap(
+		"b", "second", "a", "first", "c", "third",
+		2, "second", 1, "first", 3, "third")
+	strPart := "&a=first &b=second &c=third"
+	numPart := "&(num 1)=first &(num 2)=second &(num 3)=third"
+	want1 := "[" + strPart + " " + numPart + "]"
+	want2 := "[" + numPart + " " + strPart + "]"
+	got := ReprPlain(m)
+	if got != want1 && got != want2 {
+		t.Errorf("got %q, want %q or %q", got, want1, want2)
+	}
 }

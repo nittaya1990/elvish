@@ -9,8 +9,8 @@ This document is an advanced tutorial focusing on how to write idiomatic Elvish
 code, code that is concise and clear, and takes full advantage of Elvish's
 features.
 
-An appropriate adjective for idiomatic Elvish code, like _Pythonic_ for Python
-or _Rubyesque_ for Ruby, is **Elven**. In
+An appropriate adjective for idiomatic Elvish code, like *Pythonic* for Python
+or *Rubyesque* for Ruby, is **Elven**. In
 [Roguelike games](https://en.wikipedia.org/wiki/Roguelike), Elven items are
 known to be high-quality, artful and resilient. So is Elven code.
 
@@ -89,15 +89,15 @@ section documents how to make the most use of pipelines.
 ## Returning Values with Structured Output
 
 Unlike functions in most other programming languages, Elvish commands do not
-have return values. Instead, they can write to _structured output_, which is
+have return values. Instead, they can write to *structured output*, which is
 similar to the traditional byte-based stdout, but preserves all internal
-structures of aribitrary Elvish values. The most fundamental command that does
+structures of arbitrary Elvish values. The most fundamental command that does
 this is `put`:
 
 ```elvish-transcript
 ~> put foo
 ▶ foo
-~> x = (put foo)
+~> var x = (put foo)
 ~> put $x
 ▶ foo
 ```
@@ -109,7 +109,7 @@ old byte-based output as well. But let's try this:
 ~> put "a\nb" [foo bar]
 ▶ "a\nb"
 ▶ [foo bar]
-~> s li = (put "a\nb" [foo bar])
+~> var s li = (put "a\nb" [foo bar])
 ~> put $s
 ▶ "a\nb"
 ~> put $li[0]
@@ -129,7 +129,7 @@ write to structured output, like `str:split`:
 ~> str:split , foo,bar
 ▶ foo
 ▶ bar
-~> words = [(str:split , foo,bar)]
+~> var words = [(str:split , foo,bar)]
 ~> put $words
 ▶ [foo bar]
 ```
@@ -140,7 +140,7 @@ Elvish, it is easy to think of `put` as **the** command to "return" values and
 write code like this:
 
 ```elvish-transcript
-~> fn split-by-comma [s]{ use str; put (str:split , $s) }
+~> fn split-by-comma {|s| use str; put (str:split , $s) }
 ~> split-by-comma foo,bar
 ▶ foo
 ▶ bar
@@ -149,7 +149,7 @@ write code like this:
 The `split-by-comma` function works, but it can be written more concisely as:
 
 ```elvish-transcript
-~> fn split-by-comma [s]{ use str; str:split , $s }
+~> fn split-by-comma {|s| use str; str:split , $s }
 ~> split-by-comma foo,bar
 ▶ foo
 ▶ bar
@@ -177,7 +177,7 @@ can write to both, and output capture will capture both:
 ~> f
 bytes
 ▶ value
-~> outs = [(f)]
+~> var outs = [(f)]
 ~> put $outs
 ▶ [bytes value]
 ```
@@ -187,7 +187,7 @@ byte and value outputs, and it can recover the output sent to `echo`. When byte
 output contains multiple lines, each line becomes one value:
 
 ```elvish-transcript
-~> x = [(echo "lorem\nipsum")]
+~> var x = [(echo "lorem\nipsum")]
 ~> put $x
 ▶ [lorem ipsum]
 ```
@@ -212,7 +212,7 @@ in Elvish:
 
 ```elvish-transcript
 ~> use re
-~> fn mygrep [p]{ each [line]{ if (re:match $p $line) { echo $line } } }
+~> fn mygrep {|p| each {|line| if (re:match $p $line) { echo $line } } }
 ~> cat in.txt
 abc
 123
@@ -223,8 +223,7 @@ lorem
 456
 ```
 
-(Note that it is more concise to write `mygrep ... < in.txt`, but due to
-[a bug](https://github.com/elves/elvish/issues/600) this does not work.)
+Note that it is more concise to write `mygrep ... < in.txt`.
 
 However, this line-oriented behavior is not always desirable: not all Unix
 commands output newline-separated data. When you want to get the output as is,
@@ -288,9 +287,9 @@ comma-separated value, reduplicate each value (using commas as separators), and
 rejoin them with semicolons, you can write:
 
 ```elvish-transcript
-~> csv = a,b,foo,bar
+~> var csv = a,b,foo,bar
 ~> use str
-~> str:join ';' [(each [x]{ put $x,$x } [(str:split , $csv)])]
+~> str:join ';' [(each {|x| put $x,$x } [(str:split , $csv)])]
 ▶ 'a,a;b,b;foo,foo;bar,bar'
 ```
 
@@ -305,9 +304,9 @@ The answer to that particular question is in the next subsection, but for the
 program at hand, there is a much better way to write it:
 
 ```elvish-transcript
-~> csv = a,b,foo,bar
+~> var csv = a,b,foo,bar
 ~> use str
-~> str:split , $csv | each [x]{ put $x,$x } | str:join ';'
+~> str:split , $csv | each {|x| put $x,$x } | str:join ';'
 ▶ 'a,a;b,b;foo,foo;bar,bar'
 ```
 
@@ -381,7 +380,7 @@ not need to wait for its previous command to finish running before it can start
 processing data. Try this in your terminal:
 
 ```elvish-transcript
-~> each $str:to-upper~ | each [x]{ put $x$x }
+~> each $str:to-upper~ | each {|x| put $x$x }
 (Start typing)
 abc
 ▶ ABCABC
@@ -422,7 +421,7 @@ list:
 ▶ a
 ▶ b
 ▶ c
-~> li = (str:split , a,b,c)
+~> var li = (str:split , a,b,c)
 Exception: arity mismatch: assignment right-hand-side must be 1 value, but is 3 values
 [tty], line 1: li = (str:split , a,b,c)
 ```
@@ -434,10 +433,10 @@ constructing a list or using rest variables:
 
 ```elvish-transcript
 ~> use str
-~> li = [(str:split , a,b,c)]
+~> var li = [(str:split , a,b,c)]
 ~> put $li
 ▶ [a b c]
-~> @li = (str:split , a,b,c) # equivalent and slightly shorter
+~> var @li = (str:split , a,b,c) # equivalent and slightly shorter
 ```
 
 ## Assigning Multiple Variables
@@ -447,8 +446,8 @@ constructing a list or using rest variables:
 As of writing, Elvish is neither stable nor complete. The builtin libraries
 still have missing pieces, the package manager is in its early days, and things
 like a type system and macros have been proposed and considered, but not yet
-worked on. Deciding best practices for using feature _x_ can be a bit tricky
-when that feature _x_ doesn't yet exist!
+worked on. Deciding best practices for using feature *x* can be a bit tricky
+when that feature *x* doesn't yet exist!
 
 The current version of the document is what the lead developer of Elvish (@xiaq)
 has collected as best practices for writing Elvish code in early 2018, between

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"src.elv.sh/pkg/cli"
 	"src.elv.sh/pkg/cli/clitest"
 	"src.elv.sh/pkg/cli/term"
 	"src.elv.sh/pkg/cli/tk"
@@ -15,9 +16,14 @@ import (
 	"src.elv.sh/pkg/store"
 	"src.elv.sh/pkg/store/storedefs"
 	"src.elv.sh/pkg/testutil"
+	"src.elv.sh/pkg/tt"
 )
 
-var Styles = clitest.Styles
+// Aliases.
+var (
+	Args   = tt.Args
+	Styles = clitest.Styles
+)
 
 type fixture struct {
 	Editor  *Editor
@@ -35,11 +41,10 @@ func rc(codes ...string) func(*fixture) {
 	return func(f *fixture) { evals(f.Evaler, codes...) }
 }
 
-func assign(name string, val interface{}) func(*fixture) {
+func assign(name string, val any) func(*fixture) {
 	return func(f *fixture) {
-		f.Evaler.AddGlobal(eval.CombineNs(f.Evaler.Global(),
-			eval.NsBuilder{"temp": vars.NewReadOnly(val)}.Ns()))
-		evals(f.Evaler, name+` = $temp`)
+		f.Evaler.ExtendGlobal(eval.BuildNs().AddVar("temp", vars.NewReadOnly(val)))
+		evals(f.Evaler, "set "+name+" = $temp")
 	}
 }
 
@@ -58,15 +63,15 @@ func setup(c testutil.Cleanuper, fns ...func(*fixture)) *fixture {
 
 	tty, ttyCtrl := clitest.NewFakeTTY()
 	ev := eval.NewEvaler()
-	ev.AddGlobal(eval.NsBuilder{}.AddNs("file", file.Ns).Ns())
+	ev.ExtendGlobal(eval.BuildNs().AddNs("file", file.Ns))
 	ed := NewEditor(tty, ev, st)
-	ev.AddBuiltin(eval.NsBuilder{}.AddNs("edit", ed.Ns()).Ns())
+	ev.ExtendBuiltin(eval.BuildNs().AddNs("edit", ed))
 	evals(ev,
 		// This is the same as the default prompt for non-root users. This makes
 		// sure that the tests will work when run as root.
-		"edit:prompt = { tilde-abbr $pwd; put '> ' }",
+		"set edit:prompt = { tilde-abbr $pwd; put '> ' }",
 		// This will simplify most tests against the terminal.
-		"edit:rprompt = { }")
+		"set edit:rprompt = { }")
 	f := &fixture{Editor: ed, TTYCtrl: ttyCtrl, Evaler: ev, Store: st, Home: home}
 	for _, fn := range fns {
 		fn(f)
@@ -84,22 +89,22 @@ func (f *fixture) Wait() (string, error) {
 	return <-f.codeCh, <-f.errCh
 }
 
-func (f *fixture) MakeBuffer(args ...interface{}) *term.Buffer {
+func (f *fixture) MakeBuffer(args ...any) *term.Buffer {
 	return term.NewBufferBuilder(f.width).MarkLines(args...).Buffer()
 }
 
-func (f *fixture) TestTTY(t *testing.T, args ...interface{}) {
+func (f *fixture) TestTTY(t *testing.T, args ...any) {
 	t.Helper()
 	f.TTYCtrl.TestBuffer(t, f.MakeBuffer(args...))
 }
 
-func (f *fixture) TestTTYNotes(t *testing.T, args ...interface{}) {
+func (f *fixture) TestTTYNotes(t *testing.T, args ...any) {
 	t.Helper()
 	f.TTYCtrl.TestNotesBuffer(t, f.MakeBuffer(args...))
 }
 
 func (f *fixture) SetCodeBuffer(b tk.CodeBuffer) {
-	f.Editor.app.CodeArea().MutateState(func(s *tk.CodeAreaState) {
+	codeArea(f.Editor.app).MutateState(func(s *tk.CodeAreaState) {
 		s.Buffer = b
 	})
 }
@@ -119,23 +124,23 @@ func evals(ev *eval.Evaler, codes ...string) {
 	}
 }
 
-func getGlobal(ev *eval.Evaler, name string) interface{} {
+func getGlobal(ev *eval.Evaler, name string) any {
 	v, _ := ev.Global().Index(name)
 	return v
 }
 
-func testGlobals(t *testing.T, ev *eval.Evaler, wantVals map[string]interface{}) {
+func testGlobals(t *testing.T, ev *eval.Evaler, wantVals map[string]any) {
 	t.Helper()
 	for name, wantVal := range wantVals {
 		testGlobal(t, ev, name, wantVal)
 	}
 }
 
-func testGlobal(t *testing.T, ev *eval.Evaler, name string, wantVal interface{}) {
+func testGlobal(t *testing.T, ev *eval.Evaler, name string, wantVal any) {
 	t.Helper()
 	if val := getGlobal(ev, name); !vals.Equal(val, wantVal) {
 		t.Errorf("$%s = %s, want %s",
-			name, vals.Repr(val, vals.NoPretty), vals.Repr(wantVal, vals.NoPretty))
+			name, vals.ReprPlain(val), vals.ReprPlain(wantVal))
 	}
 }
 
@@ -145,3 +150,5 @@ func testThatOutputErrorIsBubbled(t *testing.T, f *fixture, code string) {
 	// Exceptions are booleanly false
 	testGlobal(t, f.Evaler, "ret", false)
 }
+
+func codeArea(app cli.App) tk.CodeArea { return app.ActiveWidget().(tk.CodeArea) }

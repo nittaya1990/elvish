@@ -10,72 +10,58 @@ var sourceRangeTests = []struct {
 	Context *Context
 	Indent  string
 
-	WantShow        string
-	WantShowCompact string
+	WantShow string
 }{
 	{
 		Name:    "single-line culprit",
-		Context: parseContext("echo (bad)", "(", ")", true),
+		Context: contextInParen("[test]", "echo (bad)"),
 		Indent:  "_",
 
-		WantShow: lines(
-			"[test], line 1:",
-			"_echo <(bad)>",
-		),
-		WantShowCompact: "[test], line 1: echo <(bad)>",
+		WantShow: dedent(`
+			[test]:1:6-10: echo <(bad)>`),
 	},
 	{
 		Name:    "multi-line culprit",
-		Context: parseContext("echo (bad\nbad)", "(", ")", true),
+		Context: contextInParen("[test]", "echo (bad\nbad)\nmore"),
 		Indent:  "_",
 
-		WantShow: lines(
-			"[test], line 1-2:",
-			"_echo <(bad>",
-			"_<bad)>",
-		),
-		WantShowCompact: lines(
-			"[test], line 1-2: echo <(bad>",
-			"_                  <bad)>",
-		),
+		WantShow: dedent(`
+			[test]:1:6-2:4:
+			_  echo <(bad>
+			_  <bad)>`),
+	},
+	{
+		Name:    "trailing newline in culprit is removed",
+		Context: NewContext("[test]", "echo bad\n", Ranging{5, 9}),
+		Indent:  "_",
+
+		WantShow: dedent(`
+			[test]:1:6-8: echo <bad>`),
 	},
 	{
 		Name:    "empty culprit",
-		Context: parseContext("echo x", "x", "x", false),
-		Indent:  "",
+		Context: NewContext("[test]", "echo x", Ranging{5, 5}),
 
-		WantShow: lines(
-			"[test], line 1:",
-			"echo <^>x",
-		),
-		WantShowCompact: "[test], line 1: echo <^>x",
+		WantShow: dedent(`
+			[test]:1:6: echo <>x`),
 	},
 }
 
 func TestContext(t *testing.T) {
-	culpritLineBegin = "<"
-	culpritLineEnd = ">"
+	setContextBodyMarkers(t, "<", ">")
 	for _, test := range sourceRangeTests {
 		t.Run(test.Name, func(t *testing.T) {
 			gotShow := test.Context.Show(test.Indent)
 			if gotShow != test.WantShow {
 				t.Errorf("Show() -> %q, want %q", gotShow, test.WantShow)
 			}
-			gotShowCompact := test.Context.ShowCompact(test.Indent)
-			if gotShowCompact != test.WantShowCompact {
-				t.Errorf("ShowCompact() -> %q, want %q",
-					gotShowCompact, test.WantShowCompact)
-			}
 		})
 	}
 }
 
-// Parse a string into a source range, using the first appearance of certain
-// texts as start and end positions.
-func parseContext(s, starter, ender string, endAfter bool) *Context {
-	end := strings.Index(s, ender)
-	if endAfter {
-		end += len(ender)
-	}
-	return NewContext("[test]", s, Ranging{From: strings.Index(s, starter), To: end})
+// Returns a Context with the given name and source, and a range for the part
+// between ( and ).
+func contextInParen(name, src string) *Context {
+	return NewContext(name, src,
+		Ranging{strings.Index(src, "("), strings.Index(src, ")") + 1})
 }

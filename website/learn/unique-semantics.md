@@ -4,8 +4,7 @@
 
 The semantics of Elvish is unique in many aspects when compared to other shells.
 This can be surprising if you are used to other shells, and it is a result of
-the [design choice](../ref/philosophy.html) of making Elvish a full-fledged
-programming language.
+the design choice of making Elvish a full-fledged programming language.
 
 # Structureful IO
 
@@ -33,7 +32,7 @@ Elvish offers first-class support for data structures such as lists and maps.
 Here is an example that uses a list:
 
 ```elvish-transcript
-~> li = [foo bar 'lorem ipsum']
+~> var li = [foo bar 'lorem ipsum']
 ~> kind-of $li # "kind" is like type
 ▶ list
 ~> count $li # count the number of elements in a list
@@ -52,7 +51,7 @@ capture to recover it:
 ~> fn f {
      echo [foo bar 'lorem ipsum']
    }
-~> li = (f) # (...) is output capture, like $(...) in other shells
+~> var li = (f) # (...) is output capture, like $(...) in other shells
 ~> kind-of $li
 ▶ string
 ~> count $li # count the number of bytes, since $li is now a string
@@ -69,7 +68,7 @@ Elvish provides a `put` command to output structured values as they are:
 ~> fn f {
      put [foo bar 'lorem ipsum']
    }
-~> li = (f)
+~> var li = (f)
 ~> kind-of $li
 ▶ list
 ~> count $li
@@ -107,7 +106,7 @@ as well. For instance, the `each` command takes **input** from the
 value-oriented channel, and apply a function to each value:
 
 ```elvish-transcript
-~> put lorem ipsum | each [x]{ echo "Got "$x }
+~> put lorem ipsum | each {|x| echo "Got "$x }
 Got lorem
 Got ipsum
 ```
@@ -189,8 +188,8 @@ echo "after bad" # not executed
 ```
 
 (If you run this interactively, you need to enter a literal newline after `bad`
-by pressing <span class="key">Alt-Enter</span> to make sure that it is executed
-in the same chunk as `echo "after bad"`.)
+by pressing <kbd>Alt-Enter</kbd> to make sure that it is executed in the same
+chunk as `echo "after bad"`.)
 
 And, non-zero exit status from external commands are turned into exceptions:
 
@@ -202,7 +201,7 @@ echo "after false"
 An alternative way to describe this is that Elvish **does** have exit statuses,
 but non-zero exit statuses terminates execution by default. You can handle
 non-zero exit statuses by wrapping the command in a
-[`try`](../language.html#exception-control-try) block.
+[`try`](../ref/language.html#try) block.
 
 Compare with POSIX shells, the behavior of Elvish is similar to `set -e` or
 `set -o errexit`, or having implicit `&&` operators joining all the commands.
@@ -272,7 +271,7 @@ To use predicates in `if`, you simply capture its output with `()`. So the
 second command is written in Elvish as:
 
 ```elvish
-n = 10
+var n = 10
 if (> $n 2) {
   echo 'executes when $n > 2'
 }
@@ -322,7 +321,7 @@ without executing any of it. For instance, in Elvish unclosed parenthesis is an
 error during the parsing phase. The following code, when executed as a chunk,
 does nothing other than printing the parse error:
 
-```elvish-bad
+```elvish
 echo before
 echo (
 ```
@@ -365,9 +364,9 @@ underlying map, so `m['foo']` is also changed.
 This is not the case for Elvish:
 
 ```elvish-transcript
-~> m = [&foo=bar &lorem=ipsum]
-~> m2 = $m
-~> m2[foo] = quux
+~> var m = [&foo=bar &lorem=ipsum]
+~> var m2 = $m
+~> set m2[foo] = quux
 ~> put $m[foo]
 ▶ bar
 ```
@@ -414,9 +413,9 @@ assign an element of `$m2`, Elvish turns that into an assignment of `$m2`
 itself:
 
 ```elvish
-m2[foo] = quux
+set m2[foo] = quux
 # is just syntax sugar for:
-m2 = (assoc $m2 foo quux)
+set m2 = (assoc $m2 foo quux)
 ```
 
 The sort of immutable data structures that support cheap creation of "slight

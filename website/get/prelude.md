@@ -23,7 +23,7 @@ are supported:
 Now find your platform in the table, and download the corresponding binary
 archive:
 
-<table>
+<table class="extra-wide">
   <tr>
     <th>Version</th>
     <th>amd64</th>
@@ -31,7 +31,7 @@ archive:
     <th>arm64</th>
   </tr>
   <tr>
-    <td>HEAD (<a href="https://github.com/elves/elvish/blob/master/0.17.0-release-notes.md">Draft Release Note</a>)</td>
+    <td>HEAD (<a href="https://github.com/elves/elvish/blob/master/0.20.0-release-notes.md">draft release notes</a>)</td>
     <td>
       @dl Linux linux-amd64/elvish-HEAD.tar.gz
       @dl macOS darwin-amd64/elvish-HEAD.tar.gz
@@ -51,23 +51,23 @@ archive:
   </tr>
   <tr>
     <td>
-      0.16.1 (<a href="../blog/0.16.0-release-notes.html">Release Note</a>)
+      0.19.2 (<a href="../blog/0.19.1-release-notes.html">release notes</a>)
     </td>
     <td>
-      @dl Linux linux-amd64/elvish-v0.16.1.tar.gz
-      @dl macOS darwin-amd64/elvish-v0.16.1.tar.gz
-      @dl FreeBSD freebsd-amd64/elvish-v0.16.1.tar.gz
-      @dl NetBSD netbsd-amd64/elvish-v0.16.1.tar.gz
-      @dl OpenBSD openbsd-amd64/elvish-v0.16.1.tar.gz
-      @dl Windows windows-amd64/elvish-v0.16.1.zip
+      @dl Linux linux-amd64/elvish-v0.19.2.tar.gz
+      @dl macOS darwin-amd64/elvish-v0.19.2.tar.gz
+      @dl FreeBSD freebsd-amd64/elvish-v0.19.2.tar.gz
+      @dl NetBSD netbsd-amd64/elvish-v0.19.2.tar.gz
+      @dl OpenBSD openbsd-amd64/elvish-v0.19.2.tar.gz
+      @dl Windows windows-amd64/elvish-v0.19.2.zip
     </td>
     <td>
-      @dl Linux linux-386/elvish-v0.16.1.tar.gz
-      @dl Windows windows-386/elvish-v0.16.1.zip
+      @dl Linux linux-386/elvish-v0.19.2.tar.gz
+      @dl Windows windows-386/elvish-v0.19.2.zip
     </td>
     <td>
-      @dl Linux linux-arm64/elvish-v0.16.1.tar.gz
-      @dl macOS darwin-arm64/elvish-v0.16.1.tar.gz
+      @dl Linux linux-arm64/elvish-v0.19.2.tar.gz
+      @dl macOS darwin-arm64/elvish-v0.19.2.tar.gz
     </td>
   </tr>
 </table>
@@ -91,8 +91,8 @@ the `PATH` instead and create a desktop shortcut.
 
 # Using Elvish as your default shell
 
-On non-Windows systems, the best way to use Elvish as your default shell is to
-configure your terminal to launch Elvish:
+The best way to use Elvish as your default shell is to configure your terminal
+to launch Elvish:
 
 <table>
   <tr>
@@ -107,23 +107,50 @@ configure your terminal to launch Elvish:
   <tr>
     <td>Terminal.app</td>
     <td>
-      Open <span class="key">Terminal &gt; Preferences</span>.
-      Ensure you are on the <span class="key">Profiles</span> tab, which
+      Open <kbd>Terminal &gt; Preferences</kbd>.
+      Ensure you are on the <kbd>Profiles</kbd> tab, which
       should be the default tab. In the right-hand panel, select the
-      <span class="key">Shell</span> tab. Tick
-      <span class="key">Run command</span>, put the path to Elvish in the
-      textbox, and untick <span class="key">Run inside shell</span>.
+      <kbd>Shell</kbd> tab. Tick
+      <kbd>Run command</kbd>, put the path to Elvish in the
+      textbox, and untick <kbd>Run inside shell</kbd>.
     </td>
   </tr>
   <tr>
     <td>iTerm2</td>
     <td>
-      Open <span class="key">iTerm &gt; Preferences</span>. Select the
-      <span class="key">Profiles</span> tab. In the right-hand panel under
-      <span class="key">Command</span>, change the dropdown from
-      <span class="key">Login Shell</span> to
-      <span class="key">Custom Shell</span>, and put the path to Elvish in the
+      Open <kbd>iTerm &gt; Preferences</kbd>. Select the
+      <kbd>Profiles</kbd> tab. In the right-hand panel under
+      <kbd>Command</kbd>, change the dropdown from
+      <kbd>Login Shell</kbd> to
+      <kbd>Custom Shell</kbd>, and put the path to Elvish in the
       textbox.
+    </td>
+  </tr>
+  <tr class="table-section">
+    <td colspan="2" class="notice">
+      Terminals for Windows
+    </td>
+  </tr>
+  <tr>
+    <td>Windows Terminal</td>
+    <td>
+      Press <kbd>Ctrl</kbd>+<kbd>,</kbd> to
+      open <i>Settings</i>. Go to <kbd>Add a new profile &gt; New
+      empty profile</kbd>. Fill in the 'Name' and enter path to Elvish in
+      the 'Command line' textbox. Go to <kbd>Startup</kbd>
+      option and select Elvish as the 'Default profile'. Hit
+      <kbd>Save</kbd>.
+    </td>
+  </tr>
+  <tr>
+    <td>ConEmu</td>
+    <td>
+      Press <kbd>Win</kbd>+<kbd>Alt</kbd>+
+      <kbd>T</kbd> to open the <i>Startup Tasks</i> dialog.
+      Click on <kbd>±</kbd> button to create a new task,
+      give it Elvish alias, enter the path to Elvish in the 'Commands'
+      textbox and tick the 'Default task for new console' checkbox.
+      Click on <kbd>Save settings</kbd> to finish.
     </td>
   </tr>
   <tr class="table-section">
@@ -134,25 +161,25 @@ configure your terminal to launch Elvish:
   <tr>
     <td>GNOME Terminal</td>
     <td>
-      Open <span class="key">Edit &gt; Preferences</span>. In the right-hand
-      panel, select the <span class="key">Command</span> tab, tick
-      <span class="key">Run a custom command instead of my shell</span>,
-      and set <span class="key">Custom command</span> to the path to Elvish.
+      Open <kbd>Edit &gt; Preferences</kbd>. In the right-hand
+      panel, select the <kbd>Command</kbd> tab, tick
+      <kbd>Run a custom command instead of my shell</kbd>,
+      and set <kbd>Custom command</kbd> to the path to Elvish.
     </td>
   </tr>
   <tr>
     <td>Konsole</td>
     <td>
-      Open <span class="key">Settings &gt; Edit Current Profile</span>.
-      Set <span class="key">Command</span> to the path to Elvish.
+      Open <kbd>Settings &gt; Edit Current Profile</kbd>.
+      Set <kbd>Command</kbd> to the path to Elvish.
     </td>
   </tr>
   <tr>
     <td>XFCE Terminal</td>
     <td>
-      Open <span class="key">Edit &gt; Preferences</span>. Check
-      <span class="key">Run a custom command instead of my shell</span>,
-      and set <span class="key">Custom command</span> to the path to Elvish.
+      Open <kbd>Edit &gt; Preferences</kbd>. Check
+      <kbd>Run a custom command instead of my shell</kbd>,
+      and set <kbd>Custom command</kbd> to the path to Elvish.
     </td>
   </tr>
   <tr class="table-section">
@@ -204,7 +231,7 @@ see [this Repology page](https://repology.org/project/elvish/versions).
 ## Arch Linux
 
 Elvish is available in the official repository. This will install the latest
-release:
+packaged release:
 
 ```elvish
 pacman -S elvish
@@ -218,18 +245,6 @@ your favorite AUR helper:
 yay -S elvish-git
 ```
 
-## Fedora
-
-RPM packages are available from
-[the FZUG Repo](https://github.com/FZUG/repo/wiki/Add-FZUG-Repository):
-
-```elvish
-# Add FZUG repo
-dnf config-manager --add-repo=http://repo.fdzh.org/FZUG/FZUG.repo
-# Install Elvish
-dnf install elvish
-```
-
 ## Debian / Ubuntu
 
 Elvish is packaged by [Debian](https://packages.debian.org/elvish) since buster
@@ -241,7 +256,8 @@ apt install elvish
 
 However, only testing versions of Debian and Ubuntu tend to have the latest
 Elvish release. If you are running a stable release of Debian or Ubuntu, it is
-recommended to use official [prebuilt binaries](#prebuilt-binaries) instead.
+recommended to [install an official binaries](#installing-an-official-binary)
+instead.
 
 ## macOS
 
@@ -251,7 +267,7 @@ Elvish is packaged by both [Homebrew](https://brew.sh) and
 To install from Homebrew:
 
 ```elvish
-# Install latest release
+# Install latest packaged release
 brew install elvish
 # Or install HEAD:
 brew install --HEAD elvish
@@ -264,10 +280,20 @@ sudo port selfupdate
 sudo port install elvish
 ```
 
+## Windows
+
+Elvish is available in the Main
+[bucket](https://github.com/ScoopInstaller/Main/blob/master/bucket/elvish.json)
+of [Scoop](https://scoop.sh). This will install the latest packaged release:
+
+```elvish
+scoop install elvish
+```
+
 ## FreeBSD
 
 Elvish is available in the FreeBSD ports tree and as a prebuilt package. Both
-methods will install the latest release.
+methods will install the latest packaged release.
 
 To install with `pkg`:
 
@@ -282,10 +308,26 @@ cd /usr/ports/shells/elvish
 make install
 ```
 
+## NetBSD / pkgsrc
+
+Elvish is [available in pkgsrc](https://pkgsrc.se/shells/elvish). To install
+from a binary package, run the following command:
+
+```elvish
+pkgin install elvish
+```
+
+To build the elvish package from source instead:
+
+```elvish
+cd /usr/pkgsrc/shells/elvish
+make package-install
+```
+
 ## OpenBSD
 
 Elvish is available in the official OpenBSD package repository. This will
-install the latest release:
+install the latest packaged release:
 
 ```elvish
 doas pkg_add elvish
@@ -297,7 +339,7 @@ Elvish is packaged in
 [nixpkgs](https://github.com/NixOS/nixpkgs/blob/master/pkgs/shells/elvish/default.nix):
 
 ```elvish
-# Install latest release
+# Install latest packaged release
 nix-env -i elvish
 ```
 
@@ -306,7 +348,7 @@ nix-env -i elvish
 The following old versions are no longer supported. They are only listed here
 for historical interest.
 
-<table>
+<table class="extra-wide">
   <tr>
     <th>Version</th>
     <th>amd64</th>
@@ -315,7 +357,133 @@ for historical interest.
   </tr>
   <tr>
     <td>
-      0.16.0 (<a href="../blog/0.16.0-release-notes.html">Release Note</a>)
+      0.19.1 (<a href="../blog/0.19.1-release-notes.html">release notes</a>)
+    </td>
+    <td>
+      @dl Linux linux-amd64/elvish-v0.19.1.tar.gz
+      @dl macOS darwin-amd64/elvish-v0.19.1.tar.gz
+      @dl FreeBSD freebsd-amd64/elvish-v0.19.1.tar.gz
+      @dl NetBSD netbsd-amd64/elvish-v0.19.1.tar.gz
+      @dl OpenBSD openbsd-amd64/elvish-v0.19.1.tar.gz
+      @dl Windows windows-amd64/elvish-v0.19.1.zip
+    </td>
+    <td>
+      @dl Linux linux-386/elvish-v0.19.1.tar.gz
+      @dl Windows windows-386/elvish-v0.19.1.zip
+    </td>
+    <td>
+      @dl Linux linux-arm64/elvish-v0.19.1.tar.gz
+      @dl macOS darwin-arm64/elvish-v0.19.1.tar.gz
+    </td>
+  </tr>
+  <tr>
+    <td>
+      0.18.0 (<a href="../blog/0.18.0-release-notes.html">release notes</a>)
+    </td>
+    <td>
+      @dl Linux linux-amd64/elvish-v0.18.0.tar.gz
+      @dl macOS darwin-amd64/elvish-v0.18.0.tar.gz
+      @dl FreeBSD freebsd-amd64/elvish-v0.18.0.tar.gz
+      @dl NetBSD netbsd-amd64/elvish-v0.18.0.tar.gz
+      @dl OpenBSD openbsd-amd64/elvish-v0.18.0.tar.gz
+      @dl Windows windows-amd64/elvish-v0.18.0.zip
+    </td>
+    <td>
+      @dl Linux linux-386/elvish-v0.18.0.tar.gz
+      @dl Windows windows-386/elvish-v0.18.0.zip
+    </td>
+    <td>
+      @dl Linux linux-arm64/elvish-v0.18.0.tar.gz
+      @dl macOS darwin-arm64/elvish-v0.18.0.tar.gz
+    </td>
+  </tr>
+  <tr>
+    <td>
+      0.17.0 (<a href="../blog/0.17.0-release-notes.html">release notes</a>)
+    </td>
+    <td>
+      @dl Linux linux-amd64/elvish-v0.17.0.tar.gz
+      @dl macOS darwin-amd64/elvish-v0.17.0.tar.gz
+      @dl FreeBSD freebsd-amd64/elvish-v0.17.0.tar.gz
+      @dl NetBSD netbsd-amd64/elvish-v0.17.0.tar.gz
+      @dl OpenBSD openbsd-amd64/elvish-v0.17.0.tar.gz
+      @dl Windows windows-amd64/elvish-v0.17.0.zip
+    </td>
+    <td>
+      @dl Linux linux-386/elvish-v0.17.0.tar.gz
+      @dl Windows windows-386/elvish-v0.17.0.zip
+    </td>
+    <td>
+      @dl Linux linux-arm64/elvish-v0.17.0.tar.gz
+      @dl macOS darwin-arm64/elvish-v0.17.0.tar.gz
+    </td>
+  </tr>
+  <tr>
+    <td>
+      0.16.3 (<a href="../blog/0.16.0-release-notes.html">release notes</a>)
+    </td>
+    <td>
+      @dl Linux linux-amd64/elvish-v0.16.3.tar.gz
+      @dl macOS darwin-amd64/elvish-v0.16.3.tar.gz
+      @dl FreeBSD freebsd-amd64/elvish-v0.16.3.tar.gz
+      @dl NetBSD netbsd-amd64/elvish-v0.16.3.tar.gz
+      @dl OpenBSD openbsd-amd64/elvish-v0.16.3.tar.gz
+      @dl Windows windows-amd64/elvish-v0.16.3.zip
+    </td>
+    <td>
+      @dl Linux linux-386/elvish-v0.16.3.tar.gz
+      @dl Windows windows-386/elvish-v0.16.3.zip
+    </td>
+    <td>
+      @dl Linux linux-arm64/elvish-v0.16.3.tar.gz
+      @dl macOS darwin-arm64/elvish-v0.16.3.tar.gz
+    </td>
+  </tr>
+  <tr>
+    <td>
+      0.16.2 (<a href="../blog/0.16.0-release-notes.html">release notes</a>)
+    </td>
+    <td>
+      @dl Linux linux-amd64/elvish-v0.16.2.tar.gz
+      @dl macOS darwin-amd64/elvish-v0.16.2.tar.gz
+      @dl FreeBSD freebsd-amd64/elvish-v0.16.2.tar.gz
+      @dl NetBSD netbsd-amd64/elvish-v0.16.2.tar.gz
+      @dl OpenBSD openbsd-amd64/elvish-v0.16.2.tar.gz
+      @dl Windows windows-amd64/elvish-v0.16.2.zip
+    </td>
+    <td>
+      @dl Linux linux-386/elvish-v0.16.2.tar.gz
+      @dl Windows windows-386/elvish-v0.16.2.zip
+    </td>
+    <td>
+      @dl Linux linux-arm64/elvish-v0.16.2.tar.gz
+      @dl macOS darwin-arm64/elvish-v0.16.2.tar.gz
+    </td>
+  </tr>
+  <tr>
+    <td>
+      0.16.1 (<a href="../blog/0.16.0-release-notes.html">release notes</a>)
+    </td>
+    <td>
+      @dl Linux linux-amd64/elvish-v0.16.1.tar.gz
+      @dl macOS darwin-amd64/elvish-v0.16.1.tar.gz
+      @dl FreeBSD freebsd-amd64/elvish-v0.16.1.tar.gz
+      @dl NetBSD netbsd-amd64/elvish-v0.16.1.tar.gz
+      @dl OpenBSD openbsd-amd64/elvish-v0.16.1.tar.gz
+      @dl Windows windows-amd64/elvish-v0.16.1.zip
+    </td>
+    <td>
+      @dl Linux linux-386/elvish-v0.16.1.tar.gz
+      @dl Windows windows-386/elvish-v0.16.1.zip
+    </td>
+    <td>
+      @dl Linux linux-arm64/elvish-v0.16.1.tar.gz
+      @dl macOS darwin-arm64/elvish-v0.16.1.tar.gz
+    </td>
+  </tr>
+  <tr>
+    <td>
+      0.16.0 (<a href="../blog/0.16.0-release-notes.html">release notes</a>)
     </td>
     <td>
       @dl Linux linux-amd64/elvish-v0.16.0.tar.gz
@@ -336,7 +504,7 @@ for historical interest.
   </tr>
   <tr>
     <td>
-      0.15.0 (<a href="../blog/0.15.0-release-notes.html">Release Note</a>)
+      0.15.0 (<a href="../blog/0.15.0-release-notes.html">release notes</a>)
     </td>
     <td>
       @dl Linux linux-amd64/elvish-v0.15.0.tar.gz
@@ -356,7 +524,7 @@ for historical interest.
   </tr>
   <tr>
     <td>
-      0.14.1 (<a href="../blog/0.14.1-release-notes.html">Release Note</a>)
+      0.14.1 (<a href="../blog/0.14.1-release-notes.html">release notes</a>)
     </td>
     <td>
       @dl Linux linux-amd64/elvish-v0.14.1.tar.gz
@@ -376,7 +544,7 @@ for historical interest.
   </tr>
   <tr>
     <td>
-      0.14.0 (<a href="/blog/0.14.0-release-notes.html">Release Note</a>)
+      0.14.0 (<a href="../blog/0.14.0-release-notes.html">release notes</a>)
     </td>
     <td>
       @dl Linux linux-amd64/elvish-v0.14.0.tar.gz
@@ -396,7 +564,7 @@ for historical interest.
   </tr>
   <tr>
     <td>
-      0.13.1 (<a href="/blog/0.13.1-release-notes.html">Release Note</a>)
+      0.13.1 (<a href="../blog/0.13.1-release-notes.html">release notes</a>)
     </td>
     <td>
       @dl Linux linux-amd64/elvish-v0.13.1.tar.gz
@@ -416,7 +584,7 @@ for historical interest.
   </tr>
   <tr>
     <td>
-      0.13 (<a href="/blog/0.13-release-notes.html">Release Note</a>)
+      0.13 (<a href="../blog/0.13-release-notes.html">release notes</a>)
     </td>
     <td>
       @dl Linux linux-amd64/elvish-v0.13.tar.gz
@@ -433,7 +601,7 @@ for historical interest.
   </tr>
   <tr>
     <td>
-      0.12 (<a href="/blog/0.12-release-notes.html">Release Note</a>)
+      0.12 (<a href="../blog/0.12-release-notes.html">release notes</a>)
     </td>
     <td>
       @dl Linux linux-amd64/elvish-v0.12.tar.gz
@@ -450,7 +618,7 @@ for historical interest.
   </tr>
   <tr>
     <td>
-      0.11 (<a href="/blog/0.11-release-notes.html">Release Note</a>)
+      0.11 (<a href="../blog/0.11-release-notes.html">release notes</a>)
     </td>
     <td>
       @dl Linux linux-amd64/elvish-v0.11.tar.gz
@@ -471,7 +639,7 @@ for historical interest.
     </td>
   </tr>
   <tr>
-    <td>0.10 (<a href="/blog/0.10-release-notes.html">Release Note</a>)</td>
+    <td>0.10 (<a href="../blog/0.10-release-notes.html">release notes</a>)</td>
     <td>
       @dl Linux linux-amd64/elvish-v0.10.tar.gz
       @dl macOS darwin-amd64/elvish-v0.10.tar.gz
@@ -489,7 +657,7 @@ for historical interest.
     </td>
   </tr>
   <tr>
-    <td>0.9 (<a href="/blog/0.9-release-notes.html">Release Note</a>)</td>
+    <td>0.9 (<a href="../blog/0.9-release-notes.html">release notes</a>)</td>
     <td>
       @dl Linux linux-amd64/elvish-v0.9.tar.gz
       @dl macOS darwin-amd64/elvish-v0.9.tar.gz
@@ -498,7 +666,7 @@ for historical interest.
     <td>N/A</td>
   </tr>
   <tr>
-    <td>0.8 (<a href="https://github.com/elves/elvish/releases/tag/v0.8">Release Note</a>)</td>
+    <td>0.8 (<a href="https://github.com/elves/elvish/releases/tag/v0.8">release notes</a>)</td>
     <td>
       @dl Linux linux-amd64/elvish-v0.8.tar.gz
       @dl macOS darwin-amd64/elvish-v0.8.tar.gz
@@ -507,7 +675,7 @@ for historical interest.
     <td>N/A</td>
   </tr>
   <tr>
-    <td>0.7 (<a href="https://github.com/elves/elvish/releases/tag/v0.7">Release Note</a>)</td>
+    <td>0.7 (<a href="https://github.com/elves/elvish/releases/tag/v0.7">release notes</a>)</td>
     <td>
       @dl Linux linux-amd64/elvish-v0.7.tar.gz
       @dl macOS darwin-amd64/elvish-v0.7.tar.gz
@@ -516,7 +684,7 @@ for historical interest.
     <td>N/A</td>
   </tr>
   <tr>
-    <td>0.6 (<a href="https://github.com/elves/elvish/releases/tag/v0.6">Release Note</a>)</td>
+    <td>0.6 (<a href="https://github.com/elves/elvish/releases/tag/v0.6">release notes</a>)</td>
     <td>
       @dl Linux linux-amd64/elvish-v0.6.tar.gz
       @dl macOS darwin-amd64/elvish-v0.6.tar.gz
@@ -525,7 +693,7 @@ for historical interest.
     <td>N/A</td>
   </tr>
   <tr>
-    <td>0.5 (<a href="https://github.com/elves/elvish/releases/tag/v0.5">Release Note</a>)</td>
+    <td>0.5 (<a href="https://github.com/elves/elvish/releases/tag/v0.5">release notes</a>)</td>
     <td>
       @dl Linux linux-amd64/elvish-v0.5.tar.gz
       @dl macOS darwin-amd64/elvish-v0.5.tar.gz

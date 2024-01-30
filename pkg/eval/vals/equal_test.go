@@ -5,17 +5,17 @@ import (
 	"os"
 	"testing"
 
-	. "src.elv.sh/pkg/tt"
+	"src.elv.sh/pkg/tt"
 )
 
 type customEqualer struct{ ret bool }
 
-func (c customEqualer) Equal(interface{}) bool { return c.ret }
+func (c customEqualer) Equal(any) bool { return c.ret }
 
 type customStruct struct{ a, b string }
 
 func TestEqual(t *testing.T) {
-	Test(t, Fn("Equal", Equal), Table{
+	tt.Test(t, Equal,
 		Args(nil, nil).Rets(true),
 		Args(nil, "").Rets(false),
 
@@ -57,5 +57,5 @@ func TestEqual(t *testing.T) {
 		Args(customEqualer{false}, 2).Rets(false),
 
 		Args(&customStruct{"a", "b"}, &customStruct{"a", "b"}).Rets(true),
-	})
+	)
 }

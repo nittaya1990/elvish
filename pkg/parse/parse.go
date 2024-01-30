@@ -8,12 +8,14 @@
 // is embodied in the children of each *Node type.
 package parse
 
-//go:generate stringer -type=PrimaryType,RedirMode,ExprCtx -output=string.go
+//go:generate stringer -type=PrimaryType,RedirMode,ExprCtx -output=zstring.go
 
 import (
 	"bytes"
 	"fmt"
 	"io"
+	"math"
+	"strings"
 	"unicode"
 
 	"src.elv.sh/pkg/diag"
@@ -31,8 +33,8 @@ type Config struct {
 	WarningWriter io.Writer
 }
 
-// Parse parses the given source. The returned error always has type *Error
-// if it is not nil.
+// Parse parses the given source. The returned error may contain one or more
+// parse error, which can be unpacked with [UnpackErrors].
 func Parse(src Source, cfg Config) (Tree, error) {
 	tree := Tree{&Chunk{}, src}
 	err := ParseAs(src, tree.Root, cfg)
@@ -40,12 +42,13 @@ func Parse(src Source, cfg Config) (Tree, error) {
 }
 
 // ParseAs parses the given source as a node, depending on the dynamic type of
-// n. If the error is not nil, it always has type *Error.
+// n. The returned error may contain one or more parse error, which can be
+// unpacked with [UnpackErrors].
 func ParseAs(src Source, n Node, cfg Config) error {
 	ps := &parser{srcName: src.Name, src: src.Code, warn: cfg.WarningWriter}
 	ps.parse(n)
 	ps.done()
-	return ps.assembleError()
+	return diag.PackErrors(ps.errors)
 }
 
 // Errors.
@@ -58,6 +61,7 @@ var (
 	errStringUnterminated         = newError("string not terminated")
 	errInvalidEscape              = newError("invalid escape sequence")
 	errInvalidEscapeOct           = newError("invalid escape sequence", "octal digit")
+	errInvalidEscapeOctOverflow   = newError("invalid octal escape sequence", "below 256")
 	errInvalidEscapeHex           = newError("invalid escape sequence", "hex digit")
 	errInvalidEscapeControl       = newError("invalid control sequence", "a codepoint between 0x3F and 0x5F")
 	errShouldBePrimary            = newError("", "single-quoted string", "double-quoted string", "bareword")
@@ -68,6 +72,7 @@ var (
 	errShouldBeRParen             = newError("", "')'")
 	errShouldBeCompound           = newError("", "compound")
 	errShouldBeEqual              = newError("", "'='")
+	errShouldBePipe               = newError("", "'|'")
 	errBothElementsAndPairs       = newError("cannot contain both list elements and map pairs")
 	errShouldBeNewline            = newError("", "newline")
 )
@@ -143,7 +148,8 @@ func startsPipeline(r rune) bool {
 }
 
 // Form = { Space } { { Assignment } { Space } }
-//        { Compound } { Space } { ( Compound | MapPair | Redir ) { Space } }
+//
+//	{ Compound } { Space } { ( Compound | MapPair | Redir ) { Space } }
 type Form struct {
 	node
 	Assignments []*Assignment
@@ -155,12 +161,22 @@ type Form struct {
 
 func (fn *Form) parse(ps *parser) {
 	parseSpaces(fn, ps)
-	for fn.tryAssignment(ps) {
+	for startsCompound(ps.peek(), CmdExpr) {
+		initial := ps.save()
+		cmdNode := &Compound{ExprCtx: CmdExpr}
+		parsedCmd := ps.parse(cmdNode)
+
+		if !parsableAsAssignment(cmdNode) {
+			parsedCmd.addAs(&fn.Head, fn)
+			parseSpaces(fn, ps)
+			break
+		}
+		ps.restore(initial)
+		ps.parse(&Assignment{}).addTo(&fn.Assignments, fn)
 		parseSpaces(fn, ps)
 	}
 
-	// Parse head.
-	if !startsCompound(ps.peek(), CmdExpr) {
+	if fn.Head == nil {
 		if len(fn.Assignments) > 0 {
 			// Assignment-only form.
 			return
@@ -168,8 +184,6 @@ func (fn *Form) parse(ps *parser) {
 		// Bad form.
 		ps.error(fmt.Errorf("bad rune at form head: %q", ps.peek()))
 	}
-	ps.parse(&Compound{ExprCtx: CmdExpr}).addAs(&fn.Head, fn)
-	parseSpaces(fn, ps)
 
 	for {
 		r := ps.peek()
@@ -201,25 +215,27 @@ func (fn *Form) parse(ps *parser) {
 	}
 }
 
-// tryAssignment tries to parse an assignment. If succeeded, it adds the parsed
-// assignment to fn.Assignments and returns true. Otherwise it rewinds the
-// parser and returns false.
-func (fn *Form) tryAssignment(ps *parser) bool {
-	if !startsIndexing(ps.peek(), LHSExpr) {
+func parsableAsAssignment(cn *Compound) bool {
+	if len(cn.Indexings) == 0 {
 		return false
 	}
-
-	pos := ps.pos
-	errorEntries := ps.errors.Entries
-	parsedAssignment := ps.parse(&Assignment{})
-	// If errors were added, revert
-	if len(ps.errors.Entries) > len(errorEntries) {
-		ps.errors.Entries = errorEntries
-		ps.pos = pos
+	switch cn.Indexings[0].Head.Type {
+	case Braced, SingleQuoted, DoubleQuoted:
+		return len(cn.Indexings) >= 2 &&
+			strings.HasPrefix(SourceText(cn.Indexings[1]), "=")
+	case Bareword:
+		name := cn.Indexings[0].Head.Value
+		eq := strings.IndexByte(name, '=')
+		if eq >= 0 {
+			return validBarewordVariableName(name[:eq], true)
+		} else {
+			return validBarewordVariableName(name, true) &&
+				len(cn.Indexings) >= 2 &&
+				strings.HasPrefix(SourceText(cn.Indexings[1]), "=")
+		}
+	default:
 		return false
 	}
-	parsedAssignment.addTo(&fn.Assignments, fn)
-	return true
 }
 
 func startsForm(r rune) bool {
@@ -257,22 +273,25 @@ func ValidLHSVariable(p *Primary, allowSigil bool) bool {
 	case Bareword:
 		// Bareword variable names may only contain runes that are valid in raw
 		// variable names
-		if p.Value == "" {
-			return false
-		}
-		name := p.Value
-		if allowSigil && name[0] == '@' {
-			name = name[1:]
-		}
-		for _, r := range name {
-			if !allowedInVariableName(r) {
-				return false
-			}
-		}
-		return true
+		return validBarewordVariableName(p.Value, allowSigil)
 	default:
 		return false
 	}
+}
+
+func validBarewordVariableName(name string, allowSigil bool) bool {
+	if name == "" {
+		return false
+	}
+	if allowSigil && name[0] == '@' {
+		name = name[1:]
+	}
+	for _, r := range name {
+		if !allowedInVariableName(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // Redir = { Compound } { '<'|'>'|'<>'|'>>' } { Space } ( '&'? Compound )
@@ -430,7 +449,7 @@ type Indexing struct {
 func (in *Indexing) parse(ps *parser) {
 	ps.parse(&Primary{ExprCtx: in.ExprCtx}).addAs(&in.Head, in)
 	for parseSep(in, ps, '[') {
-		if !startsArray(ps.peek()) {
+		if !startsArray(ps.peek()) && ps.peek() != ']' {
 			ps.error(errShouldBeArray)
 		}
 
@@ -629,7 +648,11 @@ func (pn *Primary) doubleQuotedInner(ps *parser) {
 					}
 					rr = rr*16 + d
 				}
-				buf.WriteRune(rr)
+				if r == 'x' {
+					buf.WriteByte(byte(rr))
+				} else {
+					buf.WriteRune(rr)
+				}
 			case '0', '1', '2', '3', '4', '5', '6', '7': // three octal digits
 				rr := r - '0'
 				for i := 0; i < 2; i++ {
@@ -641,7 +664,12 @@ func (pn *Primary) doubleQuotedInner(ps *parser) {
 					}
 					rr = rr*8 + (r - '0')
 				}
-				buf.WriteRune(rr)
+				if rr <= math.MaxUint8 {
+					buf.WriteByte(byte(rr))
+				} else {
+					r := diag.Ranging{From: ps.pos - 4, To: ps.pos}
+					ps.errorp(r, errInvalidEscapeOctOverflow)
+				}
 			default:
 				if rr, ok := doubleEscape[r]; ok {
 					buf.WriteRune(rr)
@@ -800,24 +828,40 @@ items:
 	if !parseSep(pn, ps, ']') {
 		ps.error(errShouldBeRBracket)
 	}
-	if parseSep(pn, ps, '{') {
-		pn.lambda(ps)
-	} else {
-		if loneAmpersand || len(pn.MapPairs) > 0 {
-			if len(pn.Elements) > 0 {
-				// TODO(xiaq): Add correct position information.
-				ps.error(errBothElementsAndPairs)
-			}
-			pn.Type = Map
-		} else {
-			pn.Type = List
+	if loneAmpersand || len(pn.MapPairs) > 0 {
+		if len(pn.Elements) > 0 {
+			// TODO(xiaq): Add correct position information.
+			ps.error(errBothElementsAndPairs)
 		}
+		pn.Type = Map
+	} else {
+		pn.Type = List
 	}
 }
 
 // lambda parses a lambda expression. The opening brace has been seen.
 func (pn *Primary) lambda(ps *parser) {
 	pn.Type = Lambda
+	parseSpacesAndNewlines(pn, ps)
+	if parseSep(pn, ps, '|') {
+		parseSpacesAndNewlines(pn, ps)
+	items:
+		for {
+			r := ps.peek()
+			switch {
+			case r == '&':
+				ps.parse(&MapPair{}).addTo(&pn.MapPairs, pn)
+			case startsCompound(r, NormalExpr):
+				ps.parse(&Compound{}).addTo(&pn.Elements, pn)
+			default:
+				break items
+			}
+			parseSpacesAndNewlines(pn, ps)
+		}
+		if !parseSep(pn, ps, '|') {
+			ps.error(errShouldBePipe)
+		}
+	}
 	ps.parse(&Chunk{}).addAs(&pn.Chunk, pn)
 	if !parseSep(pn, ps, '}') {
 		ps.error(errShouldBeRBrace)
@@ -829,7 +873,7 @@ func (pn *Primary) lambda(ps *parser) {
 func (pn *Primary) lbrace(ps *parser) {
 	parseSep(pn, ps, '{')
 
-	if r := ps.peek(); r == ';' || r == '\r' || r == '\n' || IsInlineWhitespace(r) {
+	if r := ps.peek(); r == ';' || r == '\r' || r == '\n' || r == '|' || IsInlineWhitespace(r) {
 		pn.lambda(ps)
 		return
 	}

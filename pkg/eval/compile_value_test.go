@@ -1,14 +1,16 @@
 package eval_test
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 
 	. "src.elv.sh/pkg/eval"
 	"src.elv.sh/pkg/eval/errs"
-	. "src.elv.sh/pkg/testutil"
-
 	. "src.elv.sh/pkg/eval/evaltest"
 	"src.elv.sh/pkg/eval/vals"
+	"src.elv.sh/pkg/fsutil"
+	"src.elv.sh/pkg/testutil"
 )
 
 func TestCompound(t *testing.T) {
@@ -73,32 +75,61 @@ func TestMapLiteral(t *testing.T) {
 func TestStringLiteral(t *testing.T) {
 	Test(t,
 		That(`put 'such \"''literal'`).Puts(`such \"'literal`),
-		That(`put "much \n\033[31;1m$cool\033[m"`).
-			Puts("much \n\033[31;1m$cool\033[m"),
+		That(`put "much \n\033[31;1m$cool\033[m"`).Puts("much \n\033[31;1m$cool\033[m"),
 	)
 }
 
 func TestTilde(t *testing.T) {
-	home := InTempHome(t)
-	ApplyDir(Dir{"file1": "", "file2": ""})
+	home := testutil.InTempHome(t)
+	testutil.ApplyDir(testutil.Dir{"file1": "", "file2": ""})
+
+	otherHome := testutil.TempDir(t)
+	testutil.ApplyDirIn(testutil.Dir{"other1": "", "other2": ""}, otherHome)
+	testutil.Set(t, GetHome, func(name string) (string, error) {
+		switch name {
+		case "":
+			return fsutil.GetHome("")
+		case "other":
+			return otherHome, nil
+		default:
+			return "", fmt.Errorf("don't know home of %v", name)
+		}
+	})
 
 	Test(t,
-		// Tilde
-		// -----
 		That("put ~").Puts(home),
 		That("put ~/src").Puts(home+"/src"),
 		// Make sure that tilde processing retains trailing slashes.
 		That("put ~/src/").Puts(home+"/src/"),
 		// Tilde and wildcard.
 		That("put ~/*").Puts(home+"/file1", home+"/file2"),
-		// TODO: Add regression test for #793.
-		// TODO: Add regression test for #1246.
+
+		// Regression test for b.elv.sh/1246.
+		That("put ~other").Puts(otherHome),
+		// Regression test for #793.
+		That("put ~other/*").Puts(otherHome+"/other1", otherHome+"/other2"),
+
+		That("put ~bad/*").Throws(ErrorWithMessage("don't know home of bad"), "~bad/*"),
+
+		// TODO: This should be a compilation error.
+		That("put ~*").Throws(ErrCannotDetermineUsername, "~*"),
+	)
+}
+
+func TestTilde_ErrorForCurrentUser(t *testing.T) {
+	err := errors.New("fake error")
+	testutil.Set(t, GetHome, func(name string) (string, error) { return "", err })
+
+	Test(t,
+		That("put ~").Throws(err, "~"),
+		That("put ~/foo").Throws(err, "~/foo"),
+		That("put ~/*").Throws(err, "~/*"),
 	)
 }
 
 func TestWildcard(t *testing.T) {
 	Test(t,
-		That("put ***").DoesNotCompile(),
+		That("put ***").DoesNotCompile(`bad wildcard: "***"`),
 	)
 	// More tests in glob_test.go
 }
@@ -122,38 +153,33 @@ func TestExceptionCapture(t *testing.T) {
 
 func TestVariableUse(t *testing.T) {
 	Test(t,
-		That("x = foo", "put $x").Puts("foo"),
+		That("var x = foo", "put $x").Puts("foo"),
 		// Must exist before use
-		That("put $x").DoesNotCompile(),
-		That("put $x[0]").DoesNotCompile(),
+		That("put $x").DoesNotCompile("variable $x not found"),
+		That("put $x[0]").DoesNotCompile("variable $x not found"),
 		// Compounding
-		That("x = SHELL", "put 'WOW, SUCH '$x', MUCH COOL'\n").
+		That("var x = SHELL", "put 'WOW, SUCH '$x', MUCH COOL'\n").
 			Puts("WOW, SUCH SHELL, MUCH COOL"),
 		// Splicing
-		That("x = [elvish rules]", "put $@x").Puts("elvish", "rules"),
+		That("var x = [elvish rules]", "put $@x").Puts("elvish", "rules"),
 
 		// Variable namespace
 		// ------------------
 
-		// Pseudo-namespace local: accesses the local scope.
-		That("x = outer; { local:x = inner; put $local:x }").Puts("inner"),
-		// Pseudo-namespace up: accesses upvalues.
-		That("x = outer; { local:x = inner; put $up:x }").Puts("outer"),
-		// Unqualified name prefers local: to up:.
-		That("x = outer; { local:x = inner; put $x }").Puts("inner"),
+		// Unqualified name resolves to local name before upvalue.
+		That("var x = outer; { var x = inner; put $x }").Puts("inner"),
 		// Unqualified name resolves to upvalue if no local name exists.
-		That("x = outer; { put $x }").Puts("outer"),
+		That("var x = outer; { put $x }").Puts("outer"),
 		// Unqualified name resolves to builtin if no local name or upvalue
 		// exists.
 		That("put $true").Puts(true),
-		// A name can be explicitly unqualified by having a leading colon.
-		That("x = val; put $:x").Puts("val"),
-		That("put $:true").Puts(true),
+		// Names like $:foo are reserved for now.
+		That("var x = val; put $:x").DoesNotCompile("variable $:x not found"),
 
 		// Pseudo-namespace E: provides read-write access to environment
 		// variables. Colons inside the name are supported.
 		That("set-env a:b VAL; put $E:a:b").Puts("VAL"),
-		That("E:a:b = VAL2; get-env a:b").Puts("VAL2"),
+		That("set E:a:b = VAL2; get-env a:b").Puts("VAL2"),
 
 		// Pseudo-namespace e: provides readonly access to external commands.
 		// Only names ending in ~ are resolved, and resolution always succeeds
@@ -162,75 +188,74 @@ func TestVariableUse(t *testing.T) {
 		That("put $e:a:b~").Puts(NewExternalCmd("a:b")),
 
 		// A "normal" namespace access indexes the namespace as a variable.
-		That("ns: = (ns [&a= val]); put $ns:a").Puts("val"),
+		That("var ns: = (ns [&a= val]); put $ns:a").Puts("val"),
 		// Multi-level namespace access is supported.
-		That("ns: = (ns [&a:= (ns [&b= val])]); put $ns:a:b").Puts("val"),
-		// Multi-level namespace access can have a leading colon to signal that
-		// the first component is unqualified.
-		That("ns: = (ns [&a:= (ns [&b= val])]); put $:ns:a:b").Puts("val"),
-		// Multi-level namespace access can be combined with the local:
-		// pseudo-namespaces.
-		That("ns: = (ns [&a:= (ns [&b= val])]); put $local:ns:a:b").Puts("val"),
-		// Multi-level namespace access can be combined with the up:
-		// pseudo-namespaces.
-		That("ns: = (ns [&a:= (ns [&b= val])]); { put $up:ns:a:b }").Puts("val"),
+		That("var ns: = (ns [&a:= (ns [&b= val])]); put $ns:a:b").Puts("val"),
+	)
+}
+
+func TestVariableUse_NonExistentVariableInModule(t *testing.T) {
+	TestWithEvalerSetup(t, func(ev *Evaler) { ev.AddModule("mod", &Ns{}) },
+		// Variables in other modules are checked at runtime.
+		That("use mod; put $mod:bad").Throws(
+			ErrorWithMessage("variable $mod:bad not found"), "$mod:bad"),
 	)
 }
 
 func TestClosure(t *testing.T) {
 	Test(t,
-		That("[]{ }").DoesNothing(),
-		That("[x]{put $x} foo").Puts("foo"),
+		That("{|| }").DoesNothing(),
+		That("{|x| put $x} foo").Puts("foo"),
 
 		// Assigning to captured variable
-		That("var x = lorem; []{set x = ipsum}; put $x").Puts("ipsum"),
-		That("var x = lorem; []{ put $x; set x = ipsum }; put $x").
+		That("var x = lorem; {|| set x = ipsum}; put $x").Puts("ipsum"),
+		That("var x = lorem; {|| put $x; set x = ipsum }; put $x").
 			Puts("lorem", "ipsum"),
 
 		// Assigning to element of captured variable
-		That("x = a; { x = b }; put $x").Puts("b"),
-		That("x = [a]; { x[0] = b }; put $x[0]").Puts("b"),
+		That("var x = a; { set x = b }; put $x").Puts("b"),
+		That("var x = [a]; { set x[0] = b }; put $x[0]").Puts("b"),
 
 		// Shadowing
-		That("var x = ipsum; []{ var x = lorem; put $x }; put $x").
+		That("var x = ipsum; { var x = lorem; put $x }; put $x").
 			Puts("lorem", "ipsum"),
 
 		// Shadowing by argument
-		That("var x = ipsum; [x]{ put $x; set x = BAD } lorem; put $x").
+		That("var x = ipsum; {|x| put $x; set x = BAD } lorem; put $x").
 			Puts("lorem", "ipsum"),
 
 		// Closure captures new local variables every time
-		That("fn f []{ var x = (num 0); put { set x = (+ $x 1) } { put $x } }",
+		That("fn f { var x = (num 0); put { set x = (+ $x 1) } { put $x } }",
 			"var inc1 put1 = (f); $put1; $inc1; $put1",
 			"var inc2 put2 = (f); $put2; $inc2; $put2").Puts(0, 1, 0, 1),
 
 		// Rest argument.
-		That("[x @xs]{ put $x $xs } a b c").Puts("a", vals.MakeList("b", "c")),
-		That("[a @b c]{ put $a $b $c } a b c d").
+		That("{|x @xs| put $x $xs } a b c").Puts("a", vals.MakeList("b", "c")),
+		That("{|a @b c| put $a $b $c } a b c d").
 			Puts("a", vals.MakeList("b", "c"), "d"),
 		// Options.
-		That("[a &k=v]{ put $a $k } foo &k=bar").Puts("foo", "bar"),
+		That("{|a &k=v| put $a $k } foo &k=bar").Puts("foo", "bar"),
 		// Option default value.
-		That("[a &k=v]{ put $a $k } foo").Puts("foo", "v"),
+		That("{|a &k=v| put $a $k } foo").Puts("foo", "v"),
 		// Option must have default value
-		That("[&k]{ }").DoesNotCompile(),
+		That("{|&k| }").DoesNotCompile("option must have default value"),
 		// Exception when evaluating option default value.
-		That("[&a=[][0]]{ }").Throws(ErrorWithType(errs.OutOfRange{}), "[][0]"),
+		That("{|&a=[][0]| }").Throws(ErrorWithType(errs.OutOfRange{}), "[][0]"),
 		// Option default value must be one value.
-		That("[&a=(put foo bar)]{ }").Throws(
+		That("{|&a=(put foo bar)| }").Throws(
 			errs.ArityMismatch{What: "option default value", ValidLow: 1, ValidHigh: 1, Actual: 2},
 			"(put foo bar)"),
 
 		// Argument name must be unqualified.
-		That("[a:b]{ }").DoesNotCompile(),
+		That("{|a:b| }").DoesNotCompile("argument name must be unqualified"),
 		// Argument name must not be empty.
-		That("['']{ }").DoesNotCompile(),
-		That("[@]{ }").DoesNotCompile(),
+		That("{|''| }").DoesNotCompile("argument name must not be empty"),
+		That("{|@| }").DoesNotCompile("argument name must not be empty"),
 		// Option name must be unqualified.
-		That("[&a:b=1]{ }").DoesNotCompile(),
+		That("{|&a:b=1| }").DoesNotCompile("option name must be unqualified"),
 		// Option name must not be empty.
-		That("[&''=b]{ }").DoesNotCompile(),
+		That("{|&''=b| }").DoesNotCompile("option name must not be empty"),
 		// Should not have multiple rest arguments.
-		That("[@a @b]{ }").DoesNotCompile(),
+		That("{|@a @b| }").DoesNotCompile("only one argument may have @ prefix"),
 	)
 }

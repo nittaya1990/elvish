@@ -1,10 +1,16 @@
 package eval
 
 import (
+	"errors"
+	"math"
+	"math/big"
 	"sync"
 	"sync/atomic"
 
-	"src.elv.sh/pkg/diag"
+	"golang.org/x/sync/semaphore"
+
+	"src.elv.sh/pkg/errutil"
+	"src.elv.sh/pkg/eval/errs"
 	"src.elv.sh/pkg/eval/vals"
 )
 
@@ -13,7 +19,7 @@ import (
 // TODO(xiaq): Document "multi-error".
 
 func init() {
-	addBuiltinFns(map[string]interface{}{
+	addBuiltinFns(map[string]any{
 		"run-parallel": runParallel,
 		// Exception and control
 		"fail":        fail,
@@ -21,57 +27,12 @@ func init() {
 		"return":      returnFn,
 		"break":       breakFn,
 		"continue":    continueFn,
+		"defer":       deferFn,
 		// Iterations.
 		"each":  each,
 		"peach": peach,
 	})
 }
-
-//elvdoc:fn run-parallel
-//
-// ```elvish
-// run-parallel $callable ...
-// ```
-//
-// Run several callables in parallel, and wait for all of them to finish.
-//
-// If one or more callables throw exceptions, the other callables continue running,
-// and a composite exception is thrown when all callables finish execution.
-//
-// The behavior of `run-parallel` is consistent with the behavior of pipelines,
-// except that it does not perform any redirections.
-//
-// Here is an example that lets you pipe the stdout and stderr of a command to two
-// different commands in order to independently capture the output of each byte stream:
-//
-// ```elvish-transcript
-// ~> fn capture [f]{
-//      var pout = (file:pipe)
-//      var perr = (file:pipe)
-//      var out err
-//      run-parallel {
-//        $f > $pout[w] 2> $perr[w]
-//        file:close $pout[w]
-//        file:close $perr[w]
-//      } {
-//        set out = (slurp < $pout[r])
-//        file:close $pout[r]
-//      } {
-//        set err = (slurp < $perr[r])
-//        file:close $perr[r]
-//      }
-//      put $out $err
-//    }
-// ~> capture { echo stdout-test; echo stderr-test >&2 }
-// ▶ "stdout-test\n"
-// ▶ "stderr-test\n"
-// ```
-//
-// This command is intended for doing a fixed number of heterogeneous things in
-// parallel. If you need homogeneous parallel processing of possibly unbound data,
-// use `peach` instead.
-//
-// @cf peach
 
 func runParallel(fm *Frame, functions ...Callable) error {
 	var wg sync.WaitGroup
@@ -84,54 +45,22 @@ func runParallel(fm *Frame, functions ...Callable) error {
 				*pexc = err.(Exception)
 			}
 			wg.Done()
-		}(fm.fork("[run-parallel function]"), function, &exceptions[i])
+		}(fm.Fork("[run-parallel function]"), function, &exceptions[i])
 	}
 
 	wg.Wait()
 	return MakePipelineError(exceptions)
 }
 
-//elvdoc:fn each
-//
-// ```elvish
-// each $f $input-list?
-// ```
-//
-// Call `$f` on all inputs.
-//
-// An exception raised from [`break`](#break) is caught by `each`, and will
-// cause it to terminate early.
-//
-// An exception raised from [`continue`](#continue) is swallowed and can be used
-// to terminate a single iteration early.
-//
-// Examples:
-//
-// ```elvish-transcript
-// ~> range 5 8 | each [x]{ * $x $x }
-// ▶ 25
-// ▶ 36
-// ▶ 49
-// ~> each [x]{ put $x[:3] } [lorem ipsum]
-// ▶ lor
-// ▶ ips
-// ```
-//
-// @cf peach
-//
-// Etymology: Various languages, as `for each`. Happens to have the same name as
-// the iteration construct of
-// [Factor](http://docs.factorcode.org/content/word-each,sequences.html).
-
 func each(fm *Frame, f Callable, inputs Inputs) error {
 	broken := false
 	var err error
-	inputs(func(v interface{}) {
+	inputs(func(v any) {
 		if broken {
 			return
 		}
-		newFm := fm.fork("closure of each")
-		ex := f.Call(newFm, []interface{}{v}, NoOpts)
+		newFm := fm.Fork("closure of each")
+		ex := f.Call(newFm, []any{v}, NoOpts)
 		newFm.Close()
 
 		if ex != nil {
@@ -149,61 +78,39 @@ func each(fm *Frame, f Callable, inputs Inputs) error {
 	return err
 }
 
-//elvdoc:fn peach
-//
-// ```elvish
-// peach $f $input-list?
-// ```
-//
-// Calls `$f` on all inputs, possibly in parallel.
-//
-// Like `each`, an exception raised from [`break`](#break) will cause `peach`
-// to terminate early. However due to the parallel nature of `peach`, the exact
-// time of termination is non-deterministic and not even guaranteed.
-//
-// An exception raised from [`continue`](#continue) is swallowed and can be used
-// to terminate a single iteration early.
-//
-// Example (your output will differ):
-//
-// ```elvish-transcript
-// ~> range 1 10 | peach [x]{ + $x 10 }
-// ▶ (num 12)
-// ▶ (num 13)
-// ▶ (num 11)
-// ▶ (num 16)
-// ▶ (num 18)
-// ▶ (num 14)
-// ▶ (num 17)
-// ▶ (num 15)
-// ▶ (num 19)
-// ~> range 1 101 |
-//    peach [x]{ if (== 50 $x) { break } else { put $x } } |
-//    + (all) # 1+...+49 = 1225; 1+...+100 = 5050
-// ▶ (num 1328)
-// ```
-//
-// This command is intended for homogeneous processing of possibly unbound data. If
-// you need to do a fixed number of heterogeneous things in parallel, use
-// `run-parallel`.
-//
-// @cf each run-parallel
+type peachOpt struct{ NumWorkers vals.Num }
 
-func peach(fm *Frame, f Callable, inputs Inputs) error {
+func (o *peachOpt) SetDefaultOptions() { o.NumWorkers = math.Inf(1) }
+
+func peach(fm *Frame, opts peachOpt, f Callable, inputs Inputs) error {
 	var wg sync.WaitGroup
 	var broken int32
 	var errMu sync.Mutex
 	var err error
 
-	inputs(func(v interface{}) {
+	var workerSema *semaphore.Weighted
+	numWorkers, limited, err := parseNumWorkers(opts.NumWorkers)
+	if err != nil {
+		return err
+	}
+	if limited {
+		workerSema = semaphore.NewWeighted(int64(numWorkers))
+	}
+
+	ctx := fm.Context()
+
+	inputs(func(v any) {
 		if atomic.LoadInt32(&broken) != 0 {
 			return
 		}
+		if workerSema != nil {
+			workerSema.Acquire(ctx, 1)
+		}
 		wg.Add(1)
 		go func() {
-			newFm := fm.fork("closure of peach")
+			newFm := fm.Fork("closure of peach")
 			newFm.ports[0] = DummyInputPort
-			ex := f.Call(newFm, []interface{}{v}, NoOpts)
+			ex := f.Call(newFm, []any{v}, NoOpts)
 			newFm.Close()
 
 			if ex != nil {
@@ -214,23 +121,52 @@ func peach(fm *Frame, f Callable, inputs Inputs) error {
 					atomic.StoreInt32(&broken, 1)
 				default:
 					errMu.Lock()
-					err = diag.Errors(err, ex)
+					err = errutil.Multi(err, ex)
 					defer errMu.Unlock()
 					atomic.StoreInt32(&broken, 1)
 				}
 			}
 			wg.Done()
+			if workerSema != nil {
+				workerSema.Release(1)
+			}
 		}()
 	})
 	wg.Wait()
 	return err
 }
 
+func parseNumWorkers(n vals.Num) (int, bool, error) {
+	switch n := n.(type) {
+	case int:
+		if n >= 1 {
+			return n, true, nil
+		}
+	case *big.Int:
+		// A limit larger than MaxInt is equivalent to no limit.
+		return 0, false, nil
+	case float64:
+		if math.IsInf(n, 1) {
+			return 0, false, nil
+		}
+	}
+	return 0, false, errs.BadValue{
+		What:   "peach &num-workers",
+		Valid:  "exact positive integer or +inf",
+		Actual: vals.ToString(n),
+	}
+}
+
 // FailError is an error returned by the "fail" command.
-type FailError struct{ Content interface{} }
+type FailError struct{ Content any }
+
+var _ vals.PseudoMap = FailError{}
 
 // Error returns the string representation of the cause.
 func (e FailError) Error() string { return vals.ToString(e.Content) }
+
+// Kind returns "fail-error".
+func (FailError) Kind() string { return "fail-error" }
 
 // Fields returns a structmap for accessing fields from Elvish.
 func (e FailError) Fields() vals.StructMap { return failFields{e} }
@@ -239,35 +175,10 @@ type failFields struct{ e FailError }
 
 func (failFields) IsStructMap() {}
 
-func (f failFields) Type() string         { return "fail" }
-func (f failFields) Content() interface{} { return f.e.Content }
+func (f failFields) Type() string { return "fail" }
+func (f failFields) Content() any { return f.e.Content }
 
-//elvdoc:fn fail
-//
-// ```elvish
-// fail $v
-// ```
-//
-// Throws an exception; `$v` may be any type. If `$v` is already an exception,
-// `fail` rethrows it.
-//
-// ```elvish-transcript
-// ~> fail bad
-// Exception: bad
-// [tty 9], line 1: fail bad
-// ~> put ?(fail bad)
-// ▶ ?(fail bad)
-// ~> fn f { fail bad }
-// ~> fail ?(f)
-// Exception: bad
-// Traceback:
-//   [tty 7], line 1:
-//     fn f { fail bad }
-//   [tty 8], line 1:
-//     fail ?(f)
-// ```
-
-func fail(v interface{}) error {
+func fail(v any) error {
 	if e, ok := v.(error); ok {
 		// MAYBE TODO: if v is an exception, attach a "rethrown" stack trace,
 		// like Java
@@ -280,104 +191,31 @@ func multiErrorFn(excs ...Exception) error {
 	return PipelineError{excs}
 }
 
-//elvdoc:fn return
-//
-// Raises the special "return" exception. When raised inside a named function
-// (defined by the [`fn` keyword](../language.html#function-definition-fn)) it
-// is captured by the function and causes the function to terminate. It is not
-// captured by an anonymous function (aka [lambda](../language.html#lambda)).
-//
-// Because `return` raises an exception it can be caught by a
-// [`try`](language.html#exception-control-try) block. If not caught, either
-// implicitly by a named function or explicitly, it causes a failure like any
-// other uncaught exception.
-//
-// See the discussion about [flow commands and
-// exceptions](language.html#exception-and-flow-commands)
-//
-// **Note**: If you want to shadow the builtin `return` function with a local
-// wrapper, do not define it with `fn` as `fn` swallows the special exception
-// raised by return. Consider this example:
-//
-// ```elvish-transcript
-// ~> use builtin
-// ~> fn return { put return; builtin:return }
-// ~> fn test-return { put before; return; put after }
-// ~> test-return
-// ▶ before
-// ▶ return
-// ▶ after
-// ```
-//
-// Instead, shadow the function by directly assigning to `return~`:
-//
-// ```elvish-transcript
-// ~> use builtin
-// ~> var return~ = { put return; builtin:return }
-// ~> fn test-return { put before; return; put after }
-// ~> test-return
-// ▶ before
-// ▶ return
-// ```
-
 func returnFn() error {
 	return Return
 }
-
-//elvdoc:fn break
-//
-// Raises the special "break" exception. When raised inside a loop it is
-// captured and causes the loop to terminate.
-//
-// Because `break` raises an exception it can be caught by a
-// [`try`](language.html#exception-control-try) block. If not caught, either
-// implicitly by a loop or explicitly, it causes a failure like any other
-// uncaught exception.
-//
-// See the discussion about [flow commands and exceptions](language.html#exception-and-flow-commands)
-//
-// **Note**: You can create a `break` function and it will shadow the builtin
-// command. If you do so you should explicitly invoke the builtin. For example:
-//
-// ```elvish-transcript
-// ~> use builtin
-// ~> fn break []{ put 'break'; builtin:break; put 'should not appear' }
-// ~> for x [a b c] { put $x; break; put 'unexpected' }
-// ▶ a
-// ▶ break
-// ```
 
 func breakFn() error {
 	return Break
 }
 
-//elvdoc:fn continue
-//
-// Raises the special "continue" exception. When raised inside a loop it is
-// captured and causes the loop to begin its next iteration.
-//
-// Because `continue` raises an exception it can be caught by a
-// [`try`](language.html#exception-control-try) block. If not caught, either
-// implicitly by a loop or explicitly, it causes a failure like any other
-// uncaught exception.
-//
-// See the discussion about [flow commands and exceptions](language.html#exception-and-flow-commands)
-//
-// **Note**: You can create a `continue` function and it will shadow the builtin
-// command. If you do so you should explicitly invoke the builtin. For example:
-//
-// ```elvish-transcript
-// ~> use builtin
-// ~> fn continue []{ put 'continue'; builtin:continue; put 'should not appear' }
-// ~> for x [a b c] { put $x; continue; put 'unexpected' }
-// ▶ a
-// ▶ continue
-// ▶ b
-// ▶ continue
-// ▶ c
-// ▶ continue
-// ```
-
 func continueFn() error {
 	return Continue
+}
+
+var errDeferNotInClosure = errors.New("defer must be called from within a closure")
+
+func deferFn(fm *Frame, fn Callable) error {
+	if fm.defers == nil {
+		return errDeferNotInClosure
+	}
+	deferTraceback := fm.traceback
+	fm.addDefer(func(fm *Frame) Exception {
+		err := fn.Call(fm, NoArgs, NoOpts)
+		if exc, ok := err.(Exception); ok {
+			return exc
+		}
+		return &exception{err, deferTraceback}
+	})
+	return nil
 }

@@ -17,9 +17,26 @@ var (
 	ErrNoOptAccepted = errors.New("function does not accept any options")
 )
 
+// WrongArgType is thrown when calling a native function with an argument of the
+// wrong type.
+type WrongArgType struct {
+	argNum    int
+	typeError error
+}
+
+// Error implements the error interface.
+func (e WrongArgType) Error() string {
+	return fmt.Sprintf("wrong type for arg #%d: %v", e.argNum, e.typeError)
+}
+
+// Unwrap returns the wrapped type error.
+func (e WrongArgType) Unwrap() error {
+	return e.typeError
+}
+
 type goFn struct {
 	name string
-	impl interface{}
+	impl any
 
 	// Type information of impl.
 
@@ -46,7 +63,7 @@ type optionsPtr interface {
 // Inputs is the type that the last parameter of a Go-native function can take.
 // When that is the case, it is a callback to get inputs. See the doc of GoFn
 // for details.
-type Inputs func(func(interface{}))
+type Inputs func(func(any))
 
 var (
 	frameType      = reflect.TypeOf((*Frame)(nil))
@@ -83,11 +100,14 @@ var (
 //
 // 4. Other parameters are converted using vals.ScanToGo.
 //
-// Return values go to the channel part of the stdout port, after being
-// converted using vals.FromGo. If the last return value has type error and is
-// not nil, it is turned into an exception and no outputting happens. If the
-// last return value is a nil error, it is ignored.
-func NewGoFn(name string, impl interface{}) Callable {
+// Return values are written to the stdout channel, after being converted using
+// vals.FromGo. Return values whose types are arrays or slices, and not defined
+// types, have their individual elements written to the output.
+//
+// If the last return value has nominal type error and is not nil, it is turned
+// into an exception and no return value is written. If the last return value is
+// a nil error, it is ignored.
+func NewGoFn(name string, impl any) Callable {
 	implType := reflect.TypeOf(impl)
 	b := &goFn{name: name, impl: impl}
 
@@ -129,7 +149,7 @@ func (*goFn) Kind() string {
 }
 
 // Equal compares identity.
-func (b *goFn) Equal(rhs interface{}) bool {
+func (b *goFn) Equal(rhs any) bool {
 	return b == rhs
 }
 
@@ -148,7 +168,7 @@ func (b *goFn) Repr(int) string {
 var errorType = reflect.TypeOf((*error)(nil)).Elem()
 
 // Call calls the implementation using reflection.
-func (b *goFn) Call(f *Frame, args []interface{}, opts map[string]interface{}) error {
+func (b *goFn) Call(f *Frame, args []any, opts map[string]any) error {
 	if b.variadicArg != nil {
 		if len(args) < len(b.normalArgs) {
 			return errs.ArityMismatch{What: "arguments",
@@ -198,7 +218,7 @@ func (b *goFn) Call(f *Frame, args []interface{}, opts map[string]interface{}) e
 		ptr := reflect.New(typ)
 		err := vals.ScanToGo(arg, ptr.Interface())
 		if err != nil {
-			return fmt.Errorf("wrong type of argument %d: %v", i, err)
+			return WrongArgType{i, err}
 		}
 		in = append(in, ptr.Elem())
 	}
@@ -213,9 +233,9 @@ func (b *goFn) Call(f *Frame, args []interface{}, opts map[string]interface{}) e
 			if !vals.CanIterate(iterable) {
 				return fmt.Errorf("%s cannot be iterated", vals.Kind(iterable))
 			}
-			inputs = func(f func(interface{})) {
+			inputs = func(f func(any)) {
 				// CanIterate(iterable) is true
-				_ = vals.Iterate(iterable, func(v interface{}) bool {
+				_ = vals.Iterate(iterable, func(v any) bool {
 					f(v)
 					return true
 				})
@@ -236,9 +256,20 @@ func (b *goFn) Call(f *Frame, args []interface{}, opts map[string]interface{}) e
 
 	out := f.ValueOutput()
 	for _, ret := range rets {
-		err := out.Put(vals.FromGo(ret.Interface()))
-		if err != nil {
-			return err
+		t := ret.Type()
+		k := t.Kind()
+		if (k == reflect.Slice || k == reflect.Array) && t.Name() == "" {
+			for i := 0; i < ret.Len(); i++ {
+				err := out.Put(vals.FromGo(ret.Index(i).Interface()))
+				if err != nil {
+					return err
+				}
+			}
+		} else {
+			err := out.Put(vals.FromGo(ret.Interface()))
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil

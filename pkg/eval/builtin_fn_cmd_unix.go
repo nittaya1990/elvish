@@ -1,5 +1,4 @@
-//go:build !windows && !plan9
-// +build !windows,!plan9
+//go:build unix
 
 package eval
 
@@ -13,30 +12,17 @@ import (
 	"src.elv.sh/pkg/env"
 	"src.elv.sh/pkg/eval/errs"
 	"src.elv.sh/pkg/eval/vals"
-	"src.elv.sh/pkg/sys"
+	"src.elv.sh/pkg/sys/eunix"
 )
 
 // ErrNotInSameProcessGroup is thrown when the process IDs passed to fg are not
 // in the same process group.
 var ErrNotInSameProcessGroup = errors.New("not in the same process group")
 
-//elvdoc:fn exec
-//
-// ```elvish
-// exec $command? $args...
-// ```
-//
-// Replace the Elvish process with an external `$command`, defaulting to
-// `elvish`, passing the given arguments. This decrements `$E:SHLVL` before
-// starting the new process.
-//
-// This command always raises an exception on Windows with the message "not
-// supported on Windows".
-
 // Reference to syscall.Exec. Can be overridden in tests.
 var syscallExec = syscall.Exec
 
-func execFn(fm *Frame, args ...interface{}) error {
+func execFn(fm *Frame, args ...any) error {
 	var argstrings []string
 	if len(args) == 0 {
 		argstrings = []string{"elvish"}
@@ -53,7 +39,7 @@ func execFn(fm *Frame, args ...interface{}) error {
 		return err
 	}
 
-	preExit(fm)
+	fm.Evaler.PreExit()
 	decSHLVL()
 
 	return syscallExec(argstrings[0], argstrings, os.Environ())
@@ -86,7 +72,7 @@ func fg(pids ...int) error {
 		}
 	}
 
-	err := sys.Tcsetpgrp(0, thepgid)
+	err := eunix.Tcsetpgrp(0, thepgid)
 	if err != nil {
 		return err
 	}

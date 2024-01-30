@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"src.elv.sh/pkg/cli/mode"
+	"src.elv.sh/pkg/cli/modes"
 	"src.elv.sh/pkg/cli/tk"
 	"src.elv.sh/pkg/eval"
 	"src.elv.sh/pkg/eval/vals"
@@ -25,26 +25,22 @@ type customListingOpts struct {
 
 func (*customListingOpts) SetDefaultOptions() {}
 
-//elvdoc:fn listing:start-custom
-//
-// Starts a custom listing addon.
-
-func listingStartCustom(ed *Editor, fm *eval.Frame, opts customListingOpts, items interface{}) {
+func listingStartCustom(ed *Editor, fm *eval.Frame, opts customListingOpts, items any) {
 	var bindings tk.Bindings
 	if opts.Binding.Map != nil {
 		bindings = newMapBindings(ed, fm.Evaler, vars.FromPtr(&opts.Binding))
 	}
-	var getItems func(string) []mode.ListingItem
+	var getItems func(string) []modes.ListingItem
 	if fn, isFn := items.(eval.Callable); isFn {
-		getItems = func(q string) []mode.ListingItem {
-			var items []mode.ListingItem
+		getItems = func(q string) []modes.ListingItem {
+			var items []modes.ListingItem
 			var itemsMutex sync.Mutex
-			collect := func(item mode.ListingItem) {
+			collect := func(item modes.ListingItem) {
 				itemsMutex.Lock()
 				defer itemsMutex.Unlock()
 				items = append(items, item)
 			}
-			valuesCb := func(ch <-chan interface{}) {
+			valuesCb := func(ch <-chan any) {
 				for v := range ch {
 					if item, itemOk := getListingItem(v); itemOk {
 						collect(item)
@@ -57,23 +53,23 @@ func listingStartCustom(ed *Editor, fm *eval.Frame, opts customListingOpts, item
 					line, err := buffered.ReadString('\n')
 					if line != "" {
 						s := strutil.ChopLineEnding(line)
-						collect(mode.ListingItem{ToAccept: s, ToShow: ui.T(s)})
+						collect(modes.ListingItem{ToAccept: s, ToShow: ui.T(s)})
 					}
 					if err != nil {
 						break
 					}
 				}
 			}
-			f := func(fm *eval.Frame) error { return fn.Call(fm, []interface{}{q}, eval.NoOpts) }
+			f := func(fm *eval.Frame) error { return fn.Call(fm, []any{q}, eval.NoOpts) }
 			err := fm.PipeOutput(f, valuesCb, bytesCb)
 			// TODO(xiaq): Report the error.
 			_ = err
 			return items
 		}
 	} else {
-		getItems = func(q string) []mode.ListingItem {
-			convertedItems := []mode.ListingItem{}
-			vals.Iterate(items, func(v interface{}) bool {
+		getItems = func(q string) []modes.ListingItem {
+			convertedItems := []modes.ListingItem{}
+			vals.Iterate(items, func(v any) bool {
 				toFilter, toFilterOk := getToFilter(v)
 				item, itemOk := getListingItem(v)
 				if toFilterOk && itemOk && strings.Contains(toFilter, q) {
@@ -86,10 +82,10 @@ func listingStartCustom(ed *Editor, fm *eval.Frame, opts customListingOpts, item
 		}
 	}
 
-	w, err := mode.NewListing(ed.app, mode.ListingSpec{
+	w, err := modes.NewListing(ed.app, modes.ListingSpec{
 		Bindings: bindings,
 		Caption:  opts.Caption,
-		GetItems: func(q string) ([]mode.ListingItem, int) {
+		GetItems: func(q string) ([]modes.ListingItem, int) {
 			items := getItems(q)
 			selected := 0
 			if opts.KeepBottom {
@@ -97,24 +93,23 @@ func listingStartCustom(ed *Editor, fm *eval.Frame, opts customListingOpts, item
 			}
 			return items, selected
 		},
-		Accept: func(s string) bool {
+		Accept: func(s string) {
 			if opts.Accept != nil {
 				callWithNotifyPorts(ed, fm.Evaler, opts.Accept, s)
 			}
-			return false
 		},
 		AutoAccept: opts.AutoAccept,
 	})
 	startMode(ed.app, w, err)
 }
 
-func getToFilter(v interface{}) (string, bool) {
+func getToFilter(v any) (string, bool) {
 	toFilterValue, _ := vals.Index(v, "to-filter")
 	toFilter, toFilterOk := toFilterValue.(string)
 	return toFilter, toFilterOk
 }
 
-func getListingItem(v interface{}) (item mode.ListingItem, ok bool) {
+func getListingItem(v any) (item modes.ListingItem, ok bool) {
 	toAcceptValue, _ := vals.Index(v, "to-accept")
 	toAccept, toAcceptOk := toAcceptValue.(string)
 	toShowValue, _ := vals.Index(v, "to-show")
@@ -123,5 +118,5 @@ func getListingItem(v interface{}) (item mode.ListingItem, ok bool) {
 		toShow = ui.T(toShowString)
 		toShowOk = true
 	}
-	return mode.ListingItem{ToAccept: toAccept, ToShow: toShow}, toAcceptOk && toShowOk
+	return modes.ListingItem{ToAccept: toAccept, ToShow: toShow}, toAcceptOk && toShowOk
 }

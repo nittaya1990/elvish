@@ -1,6 +1,7 @@
 package eval_test
 
 import (
+	"encoding/json"
 	"os"
 	"testing"
 
@@ -16,6 +17,24 @@ func TestPut(t *testing.T) {
 		That(`put $nil`).Puts(nil),
 
 		thatOutputErrorIsBubbled("put foo"),
+	)
+}
+
+func TestRepeat(t *testing.T) {
+	Test(t,
+		That(`repeat 4 foo`).Puts("foo", "foo", "foo", "foo"),
+		thatOutputErrorIsBubbled("repeat 1 foo"),
+	)
+}
+
+func TestReadBytes(t *testing.T) {
+	Test(t,
+		That("print abcd | read-bytes 1").Puts("a"),
+		// read-bytes does not consume more than needed
+		That("print abcd | { read-bytes 1; slurp }").Puts("a", "bcd"),
+		// read-bytes reads up to EOF
+		That("print abcd | read-bytes 10").Puts("abcd"),
+		thatOutputErrorIsBubbled("print abcd | read-bytes 1"),
 	)
 }
 
@@ -128,11 +147,15 @@ func TestFromTerminated(t *testing.T) {
 func TestFromJson(t *testing.T) {
 	Test(t,
 		That(`echo '{"k": "v", "a": [1, 2]}' '"foo"' | from-json`).
-			Puts(vals.MakeMap("k", "v", "a", vals.MakeList(1.0, 2.0)),
+			Puts(vals.MakeMap("k", "v", "a", vals.MakeList(1, 2)),
 				"foo"),
 		That(`echo '[null, "foo"]' | from-json`).Puts(
 			vals.MakeList(nil, "foo")),
-		That(`echo 'invalid' | from-json`).Throws(AnyError),
+		// Numbers that don't fit in int use big.Int
+		That(`echo `+z+` | from-json`).Puts(bigInt(z)),
+		// Numbers with fractional parts are float64
+		That(`echo 1.0 | from-json`).Puts(1.0),
+		That(`echo 'invalid' | from-json`).Throws(ErrorWithType(&json.SyntaxError{})),
 		thatOutputErrorIsBubbled(`echo '[]' | from-json`),
 	)
 }
@@ -176,7 +199,7 @@ func TestPrintf(t *testing.T) {
 		That(`printf "%v" abc`).Prints("abc"),
 		That(`printf "%#v" "abc xyz"`).Prints(`'abc xyz'`),
 		That(`printf '%5.3s' 3.1415`).Prints("  3.1"),
-		That(`printf '%5.3s' (float64 3.1415)`).Prints("  3.1"),
+		That(`printf '%5.3s' (num 3.1415)`).Prints("  3.1"),
 
 		That(`printf '%t' $true`).Prints("true"),
 		That(`printf '%t' $nil`).Prints("false"),
@@ -187,7 +210,7 @@ func TestPrintf(t *testing.T) {
 		That(`printf '%08b' 5`).Prints("00000101"),
 
 		That(`printf '%.1f' 3.1415`).Prints("3.1"),
-		That(`printf '%.1f' (float64 3.1415)`).Prints("3.1"),
+		That(`printf '%.1f' (num 3.1415)`).Prints("3.1"),
 
 		// Does not interpret escape sequences
 		That(`printf '%s\n%s\n' abc xyz`).Prints("abc\\nxyz\\n"),
@@ -205,6 +228,6 @@ func TestPrintf(t *testing.T) {
 	)
 }
 
-func thatOutputErrorIsBubbled(code string) TestCase {
-	return That(code + " >&-").Throws(OneOfErrors(os.ErrInvalid, eval.ErrNoValueOutput))
+func thatOutputErrorIsBubbled(code string) Case {
+	return That(code + " >&-").Throws(OneOfErrors(os.ErrInvalid, eval.ErrPortDoesNotSupportValueOutput))
 }

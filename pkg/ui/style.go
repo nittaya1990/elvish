@@ -5,10 +5,14 @@ import (
 	"strings"
 )
 
+// NoColor can be set to true to suppress foreground and background colors when
+// writing text to the terminal.
+var NoColor bool = false
+
 // Style specifies how something (mostly a string) shall be displayed.
 type Style struct {
-	Foreground Color
-	Background Color
+	Fg         Color
+	Bg         Color
 	Bold       bool
 	Dim        bool
 	Italic     bool
@@ -17,8 +21,8 @@ type Style struct {
 	Inverse    bool
 }
 
-// SGR returns SGR sequence for the style.
-func (s Style) SGR() string {
+// SGRValues returns an array of the individual SGR values for the style.
+func (s Style) SGRValues() []string {
 	var sgr []string
 
 	addIf := func(b bool, code string) {
@@ -32,20 +36,24 @@ func (s Style) SGR() string {
 	addIf(s.Underlined, "4")
 	addIf(s.Blink, "5")
 	addIf(s.Inverse, "7")
-	if s.Foreground != nil {
-		sgr = append(sgr, s.Foreground.fgSGR())
+	if s.Fg != nil && !NoColor {
+		sgr = append(sgr, s.Fg.fgSGR())
 	}
-	if s.Background != nil {
-		sgr = append(sgr, s.Background.bgSGR())
+	if s.Bg != nil && !NoColor {
+		sgr = append(sgr, s.Bg.bgSGR())
 	}
+	return sgr
+}
 
-	return strings.Join(sgr, ";")
+// SGR returns, for the Style, a string that can be included in an ANSI X3.64 SGR sequence.
+func (s Style) SGR() string {
+	return strings.Join(s.SGRValues(), ";")
 }
 
 // MergeFromOptions merges all recognized values from a map to the current
 // Style.
-func (s *Style) MergeFromOptions(options map[string]interface{}) error {
-	assignColor := func(val interface{}, colorField *Color) string {
+func (s *Style) MergeFromOptions(options map[string]any) error {
+	assignColor := func(val any, colorField *Color) string {
 		if val == "default" {
 			*colorField = nil
 			return ""
@@ -58,7 +66,7 @@ func (s *Style) MergeFromOptions(options map[string]interface{}) error {
 		}
 		return "valid color string"
 	}
-	assignBool := func(val interface{}, attrField *bool) string {
+	assignBool := func(val any, attrField *bool) string {
 		if b, ok := val.(bool); ok {
 			*attrField = b
 		} else {
@@ -72,9 +80,9 @@ func (s *Style) MergeFromOptions(options map[string]interface{}) error {
 
 		switch k {
 		case "fg-color":
-			need = assignColor(v, &s.Foreground)
+			need = assignColor(v, &s.Fg)
 		case "bg-color":
-			need = assignColor(v, &s.Background)
+			need = assignColor(v, &s.Bg)
 		case "bold":
 			need = assignBool(v, &s.Bold)
 		case "dim":

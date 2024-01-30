@@ -26,7 +26,7 @@ func K(r rune, mods ...Mod) Key {
 }
 
 // Default is used in the key binding table to indicate a default binding.
-var Default = Key{DefaultBindingRune, 0}
+var DefaultKey = Key{DefaultBindingRune, 0}
 
 // Mod represents a modifier key.
 type Mod byte
@@ -116,7 +116,7 @@ func (k Key) Kind() string {
 	return "edit:key"
 }
 
-func (k Key) Equal(other interface{}) bool {
+func (k Key) Equal(other any) bool {
 	return k == other
 }
 
@@ -166,9 +166,9 @@ var modifierByName = map[string]Mod{
 
 // ParseKey parses a symbolic key. The syntax is:
 //
-//   Key = { Mod ('+' | '-') } BareKey
+//	Key = { Mod ('+' | '-') } BareKey
 //
-//   BareKey = FunctionKeyName | SingleRune
+//	BareKey = FunctionKeyName | SingleRune
 func ParseKey(s string) (Key, error) {
 	var k Key
 
@@ -195,8 +195,8 @@ func ParseKey(s string) (Key, error) {
 				// since the user has to use the capitalized form when creating a key binding.
 				return Key{}, fmt.Errorf("Ctrl modifier with literal control char: %q", k.Rune)
 			}
-			// Convert literal control char to the equivalent canonical form;
-			// e.g., "\e" to Ctrl-'[' and "\t" to Ctrl-I.
+			// Convert literal control char to the equivalent canonical form,
+			// e.g. "\e" to Ctrl-'[' and "\t" to Ctrl-I.
 			k.Mod |= Ctrl
 			k.Rune += 0x40
 		}

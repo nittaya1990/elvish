@@ -3,7 +3,6 @@ package eval
 import (
 	"strings"
 
-	"src.elv.sh/pkg/fsutil"
 	"src.elv.sh/pkg/parse"
 )
 
@@ -46,7 +45,7 @@ func (ev *Evaler) PurelyEvalPartialCompound(cn *parse.Compound, upto int) (strin
 			i = len(head)
 		}
 		uname := head[:i]
-		home, err := fsutil.GetHome(uname)
+		home, err := getHome(uname)
 		if err != nil {
 			return "", false
 		}
@@ -59,7 +58,7 @@ func (ev *Evaler) PurelyEvalPartialCompound(cn *parse.Compound, upto int) (strin
 // If this cannot be done, it returns nil.
 //
 // Currently, only string literals and variables with no @ can be evaluated.
-func (ev *Evaler) PurelyEvalPrimary(pn *parse.Primary) interface{} {
+func (ev *Evaler) PurelyEvalPrimary(pn *parse.Primary) any {
 	switch pn.Type {
 	case parse.Bareword, parse.SingleQuoted, parse.DoubleQuoted:
 		return pn.Value

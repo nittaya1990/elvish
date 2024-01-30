@@ -6,6 +6,8 @@ import (
 	"src.elv.sh/pkg/tt"
 )
 
+var Args = tt.Args
+
 func TestBlackhole(t *testing.T) {
 	v := NewBlackhole()
 	err := v.Set("foo")
@@ -19,8 +21,8 @@ func TestBlackhole(t *testing.T) {
 }
 
 func TestIsBlackhole(t *testing.T) {
-	tt.Test(t, tt.Fn("IsBlackhole", IsBlackhole), tt.Table{
-		tt.Args(NewBlackhole()).Rets(true),
-		tt.Args(FromInit("")).Rets(false),
-	})
+	tt.Test(t, IsBlackhole,
+		Args(NewBlackhole()).Rets(true),
+		Args(FromInit("")).Rets(false),
+	)
 }

@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func a(c ...interface{}) ast {
+func a(c ...any) ast {
 	// Shorthand used for checking Compound and levels beneath.
 	return ast{"Chunk/Pipeline/Form", fs{"Head": "a", "Args": c}}
 }
@@ -197,6 +197,13 @@ var testCases = []struct {
 		want: ast{"Indexing", fs{
 			"Head": "$b", "Indices": []string{"c", "d", "\ne\n"}}},
 	},
+	{
+		name: "indexing expression with empty index",
+		code: "$a[]",
+		node: &Indexing{},
+		want: ast{"Indexing", fs{
+			"Head": "$a", "Indices": []string{""}}},
+	},
 
 	// Primary
 	{
@@ -236,12 +243,21 @@ var testCases = []struct {
 		}},
 	},
 	{
-		name: "double-quoted string with numerical escape sequences",
-		code: `"b\^[\x1b\u548c\U0002CE23\123\n\t\\"`,
+		name: "double-quoted string with numerical escape sequences for codepoints",
+		code: `"b\^[\u548c\U0002CE23\n\t\\"`,
 		node: &Primary{},
 		want: ast{"Primary", fs{
 			"Type":  DoubleQuoted,
-			"Value": "b\x1b\x1b\u548c\U0002CE23\123\n\t\\",
+			"Value": "b\x1b\u548c\U0002CE23\n\t\\",
+		}},
+	},
+	{
+		name: "double-quoted string with numerical escape sequences for bytes",
+		code: `"\123\321 \x7f\xff"`,
+		node: &Primary{},
+		want: ast{"Primary", fs{
+			"Type":  DoubleQuoted,
+			"Value": "\123\321 \x7f\xff",
 		}},
 	},
 	{
@@ -334,36 +350,23 @@ var testCases = []struct {
 		),
 	},
 	{
-		name: "lambda",
-		code: "a []{} [ ]{ } []{ echo 233 } [ x y ]{puts $x $y} { put haha}",
-		node: &Chunk{},
-		want: a(
-			ast{"Compound/Indexing/Primary", fs{
-				"Type": Lambda, "Elements": []ast{}, "Chunk": "",
-			}},
-			ast{"Compound/Indexing/Primary", fs{
-				"Type": Lambda, "Elements": []ast{}, "Chunk": " ",
-			}},
-			ast{"Compound/Indexing/Primary", fs{
-				"Type": Lambda, "Elements": []ast{}, "Chunk": " echo 233 ",
-			}},
-			ast{"Compound/Indexing/Primary", fs{
-				"Type": Lambda, "Elements": []string{"x", "y"}, "Chunk": "puts $x $y",
-			}},
-			ast{"Compound/Indexing/Primary", fs{
-				"Type": Lambda, "Elements": []ast{}, "Chunk": " put haha",
-			}},
-		),
+		name: "lambda without signature",
+		code: "{ echo}",
+		node: &Primary{},
+		want: ast{"Primary", fs{
+			"Type":  Lambda,
+			"Chunk": "echo",
+		}},
 	},
 	{
-		name: "lambda with arguments and options",
-		code: "[a b &k=v]{}",
+		name: "new-style lambda with arguments and options",
+		code: "{|a b &k=v| echo}",
 		node: &Primary{},
 		want: ast{"Primary", fs{
 			"Type":     Lambda,
 			"Elements": []string{"a", "b"},
 			"MapPairs": []string{"&k=v"},
-			"Chunk":    "",
+			"Chunk":    " echo",
 		}},
 	},
 	{
@@ -463,6 +466,13 @@ var testCases = []struct {
 		wantErrMsg:  "invalid escape sequence, should be octal digit",
 	},
 	{
+		name:        "overflow in octal escape sequence",
+		code:        `a "\400"`,
+		node:        &Chunk{},
+		wantErrPart: "\\400",
+		wantErrMsg:  "invalid octal escape sequence, should be below 256",
+	},
+	{
 		name:        "invalid single-char escape sequence",
 		code:        `a "\i"`,
 		node:        &Chunk{},
@@ -520,7 +530,7 @@ var testCases = []struct {
 		node: &Chunk{},
 		want: a(
 			ast{"Compound/Indexing/Primary",
-				fs{"Type": Lambda, "Chunk": " \rfoo\r\nbar "}},
+				fs{"Type": Lambda, "Chunk": "foo\r\nbar "}},
 		),
 	},
 	{
@@ -656,7 +666,7 @@ func TestParse(t *testing.T) {
 					t.Errorf("Parse(%q) returns no error, want error with %q",
 						test.code, test.wantErrMsg)
 				}
-				parseError := err.(*Error).Entries[0]
+				parseError := UnpackErrors(err)[0]
 				r := parseError.Context
 
 				if errPart := test.code[r.From:r.To]; errPart != test.wantErrPart {

@@ -3,6 +3,7 @@ package eval
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"src.elv.sh/pkg/diag"
 	"src.elv.sh/pkg/eval/vars"
@@ -19,6 +20,10 @@ type compiler struct {
 	scopes []*staticNs
 	// Sources of captured variables.
 	captures []*staticUpNs
+	// Pragmas tied to scopes.
+	pragmas []*scopePragma
+	// Names of internal modules.
+	modules []string
 	// Destination of warning messages. This is currently only used for
 	// deprecation messages.
 	warn io.Writer
@@ -26,27 +31,25 @@ type compiler struct {
 	deprecations deprecationRegistry
 	// Information about the source.
 	srcMeta parse.Source
+	// Compilation errors.
+	errors []*CompilationError
+	// Suggested code to fix potential issues found during compilation.
+	autofixes []string
 }
 
-func compile(b, g *staticNs, tree parse.Tree, w io.Writer) (op nsOp, err error) {
+type scopePragma struct {
+	unknownCommandIsExternal bool
+}
+
+func compile(b, g *staticNs, modules []string, tree parse.Tree, w io.Writer) (nsOp, []string, error) {
 	g = g.clone()
 	cp := &compiler{
 		b, []*staticNs{g}, []*staticUpNs{new(staticUpNs)},
-		w, newDeprecationRegistry(), tree.Source}
-	defer func() {
-		r := recover()
-		if r == nil {
-			return
-		} else if e := GetCompilationError(r); e != nil {
-			// Save the compilation error and stop the panic.
-			err = e
-		} else {
-			// Resume the panic; it is not supposed to be handled here.
-			panic(r)
-		}
-	}()
+		[]*scopePragma{{unknownCommandIsExternal: true}},
+		modules,
+		w, newDeprecationRegistry(), tree.Source, nil, nil}
 	chunkOp := cp.chunkOp(tree.Root)
-	return nsOp{chunkOp, g}, nil
+	return nsOp{chunkOp, g}, cp.autofixes, diag.PackErrors(cp.errors)
 }
 
 type nsOp struct {
@@ -57,42 +60,52 @@ type nsOp struct {
 // Prepares the local namespace, and returns the namespace and a function for
 // executing the inner effectOp. Mutates fm.local.
 func (op nsOp) prepare(fm *Frame) (*Ns, func() Exception) {
-	if len(op.template.names) > len(fm.local.names) {
-		n := len(op.template.names)
-		newLocal := &Ns{make([]vars.Var, n), op.template.names, op.template.deleted}
+	if len(op.template.infos) > len(fm.local.infos) {
+		n := len(op.template.infos)
+		newLocal := &Ns{make([]vars.Var, n), op.template.infos}
 		copy(newLocal.slots, fm.local.slots)
-		for i := len(fm.local.names); i < n; i++ {
-			newLocal.slots[i] = MakeVarFromName(newLocal.names[i])
+		for i := len(fm.local.infos); i < n; i++ {
+			// TODO: Take readOnly into account too
+			newLocal.slots[i] = MakeVarFromName(newLocal.infos[i].name)
 		}
 		fm.local = newLocal
 	} else {
-		// If no new has been created, there might still be some existing
-		// variables deleted.
-		fm.local = &Ns{fm.local.slots, fm.local.names, op.template.deleted}
+		// If no new variable has been created, there might still be some
+		// existing variables deleted.
+		fm.local = &Ns{fm.local.slots, op.template.infos}
 	}
 	return fm.local, func() Exception { return op.inner.exec(fm) }
 }
 
-const compilationErrorType = "compilation error"
+type CompilationError = diag.Error[CompilationErrorTag]
 
-func (cp *compiler) errorpf(r diag.Ranger, format string, args ...interface{}) {
-	// The panic is caught by the recover in compile above.
-	panic(&diag.Error{
-		Type:    compilationErrorType,
+// CompilationErrorTag parameterizes [diag.Error] to define [CompilationError].
+type CompilationErrorTag struct{}
+
+func (CompilationErrorTag) ErrorTag() string { return "compilation error" }
+
+func (cp *compiler) errorpf(r diag.Ranger, format string, args ...any) {
+	cp.errors = append(cp.errors, &CompilationError{
 		Message: fmt.Sprintf(format, args...),
 		Context: *diag.NewContext(cp.srcMeta.Name, cp.srcMeta.Code, r)})
 }
 
-// GetCompilationError returns a *diag.Error if the given value is a compilation
-// error. Otherwise it returns nil.
-func GetCompilationError(e interface{}) *diag.Error {
-	if e, ok := e.(*diag.Error); ok && e.Type == compilationErrorType {
-		return e
+// UnpackCompilationErrors returns the constituent compilation errors if the
+// given error contains one or more compilation errors. Otherwise it returns
+// nil.
+func UnpackCompilationErrors(e error) []*CompilationError {
+	if errs := diag.UnpackErrors[CompilationErrorTag](e); len(errs) > 0 {
+		return errs
 	}
 	return nil
 }
+
 func (cp *compiler) thisScope() *staticNs {
 	return cp.scopes[len(cp.scopes)-1]
+}
+
+func (cp *compiler) currentPragma() *scopePragma {
+	return cp.pragmas[len(cp.pragmas)-1]
 }
 
 func (cp *compiler) pushScope() (*staticNs, *staticUpNs) {
@@ -100,6 +113,8 @@ func (cp *compiler) pushScope() (*staticNs, *staticUpNs) {
 	up := new(staticUpNs)
 	cp.scopes = append(cp.scopes, sc)
 	cp.captures = append(cp.captures, up)
+	currentPragmaCopy := *cp.currentPragma()
+	cp.pragmas = append(cp.pragmas, &currentPragmaCopy)
 	return sc, up
 }
 
@@ -108,27 +123,25 @@ func (cp *compiler) popScope() {
 	cp.scopes = cp.scopes[:len(cp.scopes)-1]
 	cp.captures[len(cp.captures)-1] = nil
 	cp.captures = cp.captures[:len(cp.captures)-1]
+	cp.pragmas[len(cp.pragmas)-1] = nil
+	cp.pragmas = cp.pragmas[:len(cp.pragmas)-1]
 }
 
 func (cp *compiler) checkDeprecatedBuiltin(name string, r diag.Ranger) {
 	msg := ""
-	minLevel := 16
+	minLevel := 20
 	switch name {
-	case "fopen~":
-		msg = `the "fopen" command is deprecated; use "file:open" instead`
-	case "fclose~":
-		msg = `the "fclose" command is deprecated; use "file:close" instead`
-	case "pipe~":
-		msg = `the "pipe" command is deprecated; use "file:pipe" instead`
-	case "prclose~":
-		msg = `the "prclose" command is deprecated; use "file:close $p[r]" instead`
-	case "pwclose":
-		msg = `the "pwclose" command is deprecated; use "file:close $p[w]" instead`
+	case "eawk~":
+		msg = `the "eawk" command is deprecated; use "re:awk" instead`
 	default:
 		return
 	}
 	cp.deprecate(r, msg, minLevel)
 }
+
+type deprecationTag struct{}
+
+func (deprecationTag) ErrorTag() string { return "deprecation" }
 
 func (cp *compiler) deprecate(r diag.Ranger, msg string, minLevel int) {
 	if cp.warn == nil || r == nil {
@@ -136,10 +149,21 @@ func (cp *compiler) deprecate(r diag.Ranger, msg string, minLevel int) {
 	}
 	dep := deprecation{cp.srcMeta.Name, r.Range(), msg}
 	if prog.DeprecationLevel >= minLevel && cp.deprecations.register(dep) {
-		err := diag.Error{
-			Type: "deprecation", Message: msg,
-			Context: diag.Context{
-				Name: cp.srcMeta.Name, Source: cp.srcMeta.Code, Ranging: r.Range()}}
+		err := diag.Error[deprecationTag]{
+			Message: msg,
+			Context: *diag.NewContext(cp.srcMeta.Name, cp.srcMeta.Code, r.Range())}
 		fmt.Fprintln(cp.warn, err.Show(""))
+	}
+}
+
+// Given a variable that doesn't resolve, add any applicable autofixes.
+func (cp *compiler) autofixUnresolvedVar(qname string) {
+	if len(cp.modules) == 0 {
+		return
+	}
+	first, _ := SplitQName(qname)
+	mod := strings.TrimSuffix(first, ":")
+	if mod != first && sliceContains(cp.modules, mod) {
+		cp.autofixes = append(cp.autofixes, "use "+mod)
 	}
 }

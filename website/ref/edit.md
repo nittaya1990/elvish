@@ -1,13 +1,13 @@
 <!-- toc -->
 
-@module edit pkg/edit
+@module edit
 
 The `edit:` module is the interface to the Elvish editor.
 
 Function usages are given in the same format as in the
 [reference for the builtin module](builtin.html).
 
-_This document is incomplete._
+*This document is incomplete.*
 
 # Overview
 
@@ -16,10 +16,10 @@ _This document is incomplete._
 The Elvish editor has different **modes**, and exactly one mode is active at the
 same time. Each mode has its own UI and keybindings. For instance, the default
 **insert mode** lets you modify the current command. The **completion mode**
-(triggered by <span class="key">Tab</span> by default) shows you all candidates
-for completion, and you can use arrow keys to navigate those candidates.
+(triggered by <kbd>Tab</kbd> by default) shows you all candidates for
+completion, and you can use arrow keys to navigate those candidates.
 
-@ttyshot completion-mode
+@ttyshot ref/edit/completion-mode
 
 Each mode has its own submodule under `edit:`. For instance, builtin functions
 and configuration variables for the completion mode can be found in the
@@ -56,16 +56,16 @@ sequences is mostly for compatibility with external cross-shell prompts.
 The default prompt and rprompt are equivalent to:
 
 ```elvish
-edit:prompt = { tilde-abbr $pwd; put '> ' }
-edit:rprompt = (constantly (styled (whoami)@(hostname) inverse))
+set edit:prompt = { tilde-abbr $pwd; put '> ' }
+set edit:rprompt = (constantly (styled (whoami)@(hostname) inverse))
 ```
 
-More prompt functions:
+Some more examples:
 
 ```elvish-transcript
-~> edit:prompt = { tilde-abbr $pwd; styled '> ' green }
+~> set edit:prompt = { tilde-abbr $pwd; styled '> ' green }
 ~> # ">" is now green
-~> edit:prompt = { echo '$' }
+~> set edit:prompt = { echo '$' }
 $
 # Cursor will be on the next line as `echo` outputs a trailing newline
 ```
@@ -92,21 +92,21 @@ output is interpreted in the same way as prompt functions. Some examples are:
 
 ```elvish
 # The following effectively disables marking of stale prompt.
-edit:prompt-stale-transform = [x]{ put $x }
+set edit:prompt-stale-transform = {|x| put $x }
 # Show stale prompts in inverse; equivalent to the default.
-edit:prompt-stale-transform = [x]{ styled $x inverse }
+set edit:prompt-stale-transform = {|x| styled $x inverse }
 # Gray out stale prompts.
-edit:prompt-stale-transform = [x]{ styled $x bright-black }
+set edit:prompt-stale-transform = {|x| styled $x bright-black }
 ```
 
 To see the transformer in action, try the following example (assuming default
 `$edit:prompt-stale-transform`):
 
 ```elvish
-n = 0
-edit:prompt = { sleep 2; put $n; n = (+ $n 1); put ': ' }
-edit:-prompt-eagerness = 10 # update prompt on each keystroke
-edit:prompt-stale-threshold = 0.5
+var n = 0
+set edit:prompt = { sleep 2; put $n; set n = (+ $n 1); put ': ' }
+set edit:-prompt-eagerness = 10 # update prompt on each keystroke
+set edit:prompt-stale-threshold = 0.5
 ```
 
 And then start typing. Type one character; the prompt becomes inverse after 0.5
@@ -131,10 +131,10 @@ The occasions when the prompt should get updated can be controlled with
 -   The prompt is always updated when the editor becomes active -- when Elvish
     starts, or a command finishes execution, or when the user presses Enter.
 
--   If `$edit-prompt-eagerness` >= 5, it is updated when the working directory
+-   If `$edit:-prompt-eagerness` >= 5, it is updated when the working directory
     changes.
 
--   If `$edit-prompt-eagerness` >= 10, it is updated on each keystroke.
+-   If `$edit:-prompt-eagerness` >= 10, it is updated on each keystroke.
 
 The default value is 5.
 
@@ -145,7 +145,7 @@ press Enter, it is erased. If you want to keep it, simply set
 `$edit:rprompt-persistent` to `$true`:
 
 ```elvish
-edit:rprompt-persistent = $true
+set edit:rprompt-persistent = $true
 ```
 
 ## Keybindings
@@ -162,28 +162,28 @@ A binding tables is simply a map that maps keys to functions. For instance, to
 bind `Alt-x` in insert mode to exit Elvish, simply do:
 
 ```elvish
-edit:insert:binding[Alt-x] = { exit }
+set edit:insert:binding[Alt-x] = { exit }
 ```
 
 Outputs from a bound function always appear above the Elvish prompt. You can see
 this by doing the following:
 
 ```elvish
-edit:insert:binding[Alt-x] = { echo 'output from a bound function!' }
+set edit:insert:binding[Alt-x] = { echo 'output from a bound function!' }
 ```
 
-and press <span class="key">Alt-x</span> in insert mode. It allows you to put
-debugging outputs in bound functions without messing up the terminal.
+and press <kbd>Alt-x</kbd> in insert mode. It allows you to put debugging
+outputs in bound functions without messing up the terminal.
 
 Internally, this is implemented by connecting their output to a pipe. This does
 the correct thing in most cases, but if you are sure you want to do something to
 the terminal, redirect the output to `/dev/tty`. Since this will break Elvish's
 internal tracking of the terminal state, you should also do a full redraw with
-`edit:redraw &full=$true`. For instance, the following binds
-<span class="key">Ctrl-L</span> to clearing the terminal:
+`edit:redraw &full=$true`. For instance, the following binds <kbd>Ctrl-L</kbd>
+to clearing the terminal:
 
 ```elvish
-edit:insert:binding[Ctrl-L] = { clear > /dev/tty; edit:redraw &full=$true }
+set edit:insert:binding[Ctrl-L] = { clear > /dev/tty; edit:redraw &full=$true }
 ```
 
 (The same functionality is already available as a builtin, `edit:clear`.)
@@ -198,23 +198,23 @@ names such as `x` and `Y` as well as function key names such as `Enter`.
 Key names have zero or more modifiers from the following symbols:
 
 ```
-    A  Alt
-    C  Ctrl
-    M  Meta
-    S  Shift
+A  Alt
+C  Ctrl
+M  Meta
+S  Shift
 ```
 
-Modifiers, if present, end with either a `-` or `+`; e.g., `S-F1`, `Ctrl-X` or
-`Alt+Enter`. You can stack modifiers; e.g., `C+A-X`.
+Modifiers end with either a `-` or `+`, such as in `S-F1`, `Ctrl-X` or
+`Alt+Enter`. You can stack modifiers, such as in `C+A-X`.
 
 The key name may be a simple character such as `x` or a function key from these
 symbols:
 
 ```
-    F1  F2  F3  F4  F5  F6  F7  F8  F9  F10  F11  F12
-    Up  Down  Right  Left
-    Home  Insert  Delete  End  PageUp  PageDown
-    Tab  Enter  Backspace
+F1  F2  F3  F4  F5  F6  F7  F8  F9  F10  F11  F12
+Up  Down  Right  Left
+Home  Insert  Delete  End  PageUp  PageDown
+Tab  Enter  Backspace
 ```
 
 **Note:** `Tab` is an alias for `"\t"` (aka `Ctrl-I`), `Enter` for `"\n"` (aka
@@ -227,8 +227,8 @@ You cannot write `Shift-m` as a synonym for `M`.
 
 ### Listing Modes
 
-The modes `histlist`, `loc` and `lastcmd` are all **listing modes**: They all
-show a list, and you can filter items and accept items.
+The modes `histlist`, `location` and `lastcmd` are all **listing modes**: They
+all show a list, and you can filter items and accept items.
 
 Because they are very similar, you may want to change their bindings at the same
 time. This is made possible by the `$edit:listing:binding` binding table
@@ -244,26 +244,25 @@ listing mode is active.
 
 Note that keybindings to **start** modes live in the binding table of the insert
 mode, not the target mode. For instance, if you want to be able to use
-<span class="key">Alt-l</span> to start location mode, you should modify
+<kbd>Alt-l</kbd> to start location mode, you should modify
 `$edit:insert:binding[Alt-l]`:
 
 ```elvish
-edit:insert:binding[Alt-l] = { edit:location:start }
+set edit:insert:binding[Alt-l] = { edit:location:start }
 ```
 
-One tricky case is the history mode. You can press
-<span class="key">▲&#xfe0e;</span> to start searching for history, and continue
-pressing it to search further. However, when the first press happens, the editor
-is in insert mode, while with subsequent presses, the editor is in history mode.
-Hence this binding actually relies on two entries, `$edit:insert:binding[Up]`
-and `$edit:history:binding[Up]`.
+One tricky case is the history mode. You can press <kbd>▲︎</kbd> to start
+searching for history, and continue pressing it to search further. However, when
+the first press happens, the editor is in insert mode, while with subsequent
+presses, the editor is in history mode. Hence this binding actually relies on
+two entries, `$edit:insert:binding[Up]` and `$edit:history:binding[Up]`.
 
-So for instance if you want to be able to use <span class="key">Ctrl-P</span>
-for this, you need to modify both bindings:
+So for instance if you want to be able to use <kbd>Ctrl-P</kbd> for this, you
+need to modify both bindings:
 
 ```elvish
-edit:insert:binding[Ctrl-P] =  { edit:history:start }
-edit:history:binding[Ctrl-P] = { edit:history:up }
+set edit:insert:binding[Ctrl-P] =  { edit:history:start }
+set edit:history:binding[Ctrl-P] = { edit:history:up }
 ```
 
 ## Filter DSL
@@ -292,14 +291,14 @@ an implicit `[and ...]`.
 
 There are two types of completions in Elvish: completion for internal data and
 completion for command arguments. The former includes completion for variable
-names (e.g. `echo $`<span class="key">Tab</span>) and indices (e.g.
-`echo $edit:insert:binding[`<span class="key">Tab</span>). These are the
-completions that Elvish can provide itself because they only depend on the
-internal state of Elvish.
+names (e.g. `echo $`<kbd>Tab</kbd>) and indices (e.g.
+`echo $edit:insert:binding[`<kbd>Tab</kbd>). These are the completions that
+Elvish can provide itself because they only depend on the internal state of
+Elvish.
 
-The latter, in turn, is what happens when you type e.g. `cat`<span
-class="key">Tab</span>. Elvish cannot provide completions for them without full
-knowledge of the command.
+The latter, in turn, is what happens when you type e.g. `cat`<kbd>Tab</kbd>.
+Elvish cannot provide completions for them without full knowledge of the
+command.
 
 Command argument completions are programmable via the
 `$edit:completion:arg-completer` variable. When Elvish is completing an argument
@@ -307,17 +306,15 @@ of command `$x`, it will call the value stored in
 `$edit:completion:arg-completer[$x]`, with all the existing arguments, plus the
 command name in the front.
 
-For example, if the user types `man 1`<span class="key">Tab</span>, Elvish will
-call:
+For example, if the user types `man 1`<kbd>Tab</kbd>, Elvish will call:
 
 ```elvish
 $edit:completion:arg-completer[man] man 1
 ```
 
-If the user is starting a new argument when hitting <span
-class="key">Tab</span>, Elvish will call the completer with a trailing empty
-string. For instance, if you do `man 1`<span class="key">Space</span><span
-class="key">Tab</span>, Elvish will call:
+If the user is starting a new argument when hitting <kbd>Tab</kbd>, Elvish will
+call the completer with a trailing empty string. For instance, if you do
+`man 1`<kbd>Space</kbd><kbd>Tab</kbd>, Elvish will call:
 
 ```elvish
 $edit:completion:arg-completer[man] man 1 ""
@@ -340,8 +337,8 @@ candidates:
     edit:complex-candidate &code-suffix='' &display=$stem' ('$description')'  $stem
     ```
 
-    See [`edit:complex-candidate`](#editcomplex-candidate) for the full
-    description of the arguments is accepts.
+    See [`edit:complex-candidate`]() for the full description of the arguments
+    is accepts.
 
 After receiving your candidates, Elvish will match your candidates against what
 the user has typed. Hence, normally you don't need to (and shouldn't) do any
@@ -358,10 +355,10 @@ It only supports completing the `install` and `remove` command and package names
 after that:
 
 ```elvish
-all-packages = [(apt-cache search '' | eawk [0 1 @rest]{ put $1 })]
+var all-packages = [(apt-cache search '' | eawk {|0 1 @rest| put $1 })]
 
-edit:completion:arg-completer[apt] = [@args]{
-    n = (count $args)
+set edit:completion:arg-completer[apt] = {|@args|
+    var n = (count $args)
     if (== $n 2) {
         # apt x<Tab> -- complete a subcommand name
         put install uninstall
@@ -378,16 +375,16 @@ completing some common subcommands and then branch names after that:
 fn all-git-branches {
     # Note: this assumes a recent version of git that supports the format
     # string used.
-    git branch -a --format="%(refname:strip=2)" | eawk [0 1 @rest]{ put $1 }
+    git branch -a --format="%(refname:strip=2)" | eawk {|0 1 @rest| put $1 }
 }
 
-common-git-commands = [
+var common-git-commands = [
   add branch checkout clone commit diff init log merge
   pull push rebase reset revert show stash status
 ]
 
-edit:arg-completer[git] = [@args]{
-    n = (count $args)
+set edit:completion:arg-completer[git] = {|@args|
+    var n = (count $args)
     if (== $n 2) {
         put $@common-git-commands
     } elif (>= $n 3) {
@@ -401,7 +398,7 @@ edit:arg-completer[git] = [@args]{
 As stated above, after the completer outputs candidates, Elvish matches them
 with them with what the user has typed. For clarity, the part of the user input
 that is relevant to tab completion is called for the **seed** of the completion.
-For instance, in `echo x`<span class="key">Tab</span>, the seed is `x`.
+For instance, in `echo x`<kbd>Tab</kbd>, the seed is `x`.
 
 Elvish first indexes the matcher table -- `$edit:completion:matcher` -- with the
 completion type to find a **matcher**. The **completion type** is currently one
@@ -410,14 +407,14 @@ of `variable`, `index`, `command`, `redir` or `argument`. If the
 `$edit:completion:matcher['']` is used.
 
 Elvish then calls the matcher with one argument -- the seed, and feeds the
-_text_ of all candidates to the input. The mather must output an identical
+*text* of all candidates to the input. The mather must output an identical
 number of booleans, indicating whether the candidate should be kept.
 
 As an example, the following code configures a prefix matcher for all completion
 types:
 
 ```elvish
-edit:completion:matcher[''] = [seed]{ each [cand]{ has-prefix $cand $seed } }
+set edit:completion:matcher[''] = {|seed| each {|cand| has-prefix $cand $seed } }
 ```
 
 Elvish provides three builtin matchers, `edit:match-prefix`, `edit:match-substr`
@@ -426,7 +423,7 @@ accept two options `&ignore-case` and `&smart-case`. For example, if you want
 completion of arguments to use prefix matching and ignore case, use:
 
 ```elvish
-edit:completion:matcher[argument] = [seed]{ edit:match-prefix $seed &ignore-case=$true }
+set edit:completion:matcher[argument] = {|seed| edit:match-prefix $seed &ignore-case=$true }
 ```
 
 The default value of `$edit:completion:matcher` is `[&''=$edit:match-prefix~]`,
@@ -440,8 +437,8 @@ functionality is provided by variables that are a list of functions.
 **NOTE**: Hook variables may be initialized with a non-empty list, and you may
 have modules that add their own hooks. In general you should append to a hook
 variable rather than assign a list of functions to it. That is, rather than
-doing `set edit:some-hook = [ []{ put 'I ran' } ]` you should do
-`set edit:some-hook = [ $@hook-var []{ put 'I ran' } ]`.
+doing `set edit:some-hook = [ { put 'I ran' } ]` you should do
+`set edit:some-hook = [ $@hook-var { put 'I ran' } ]`.
 
 These are the editor/REPL hooks:
 
@@ -463,21 +460,21 @@ These are the editor/REPL hooks:
 Example usage:
 
 ```elvish
-edit:before-readline = [{ echo 'going to read' }]
-edit:after-readline = [[line]{ echo 'just read '$line }]
-edit:after-command = [[m]{ echo 'command took '$m[duration]' seconds' }]
+set edit:before-readline = [{ echo 'going to read' }]
+set edit:after-readline = [{|line| echo 'just read '$line }]
+set edit:after-command = [{|m| echo 'command took '$m[duration]' seconds' }]
 ```
 
 Given the above hooks...
 
-1. Every time you accept a chunk of code (normally by pressing Enter)
-   `just read` is printed.
+1.  Every time you accept a chunk of code (normally by pressing Enter)
+    `just read` is printed.
 
-1. At the very beginning of an Elvish session, or after a chunk of code is
-   handled, `going to read` is printed.
+2.  At the very beginning of an Elvish session, or after a chunk of code is
+    handled, `going to read` is printed.
 
-1. After each non empty chunk of code is accepted and executed the string
-   "command took ... seconds` is output.
+3.  After each non empty chunk of code is accepted and executed the string
+    "command took ... seconds\` is output.
 
 ## Word types
 
@@ -513,3 +510,16 @@ To see the difference between these definitions, consider the following string:
     words.
 
 -   It contains two alnum words, `abc` and `xyz`.
+
+## Autofix
+
+The editor can identify **autofix** commands to fix some errors in the code.
+
+For example, if you try to use a command from [the `str:` module](str.html)
+without importing it, the editor will offer `use str` as an autofix command:
+
+@ttyshot ref/edit/autofix
+
+As seen above, autofixes are also applied automatically by
+[`edit:completion:smart-start`]() (the default binding for <kbd>Tab</kbd>) and
+[`edit:smart-enter`]() (the default binding for <kbd>Enter</kbd>).

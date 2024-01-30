@@ -6,8 +6,8 @@ import (
 
 	"src.elv.sh/pkg/env"
 	. "src.elv.sh/pkg/eval"
-
 	. "src.elv.sh/pkg/eval/evaltest"
+	"src.elv.sh/pkg/must"
 	"src.elv.sh/pkg/parse"
 	"src.elv.sh/pkg/testutil"
 )
@@ -18,8 +18,8 @@ func TestChdir(t *testing.T) {
 	ev := NewEvaler()
 
 	argDirInBefore, argDirInAfter := "", ""
-	ev.AddBeforeChdir(func(dir string) { argDirInBefore = dir })
-	ev.AddAfterChdir(func(dir string) { argDirInAfter = dir })
+	ev.BeforeChdir = append(ev.BeforeChdir, func(dir string) { argDirInBefore = dir })
+	ev.AfterChdir = append(ev.AfterChdir, func(dir string) { argDirInAfter = dir })
 
 	back := saveWd()
 	defer back()
@@ -51,9 +51,9 @@ func TestChdirElvishHooks(t *testing.T) {
 
 	Test(t,
 		That(`
-			dir-in-before dir-in-after = '' ''
-			@before-chdir = [dst]{ dir-in-before = $dst }
-			@after-chdir  = [dst]{ dir-in-after  = $dst }
+			var dir-in-before dir-in-after = '' ''
+			set @before-chdir = {|dst| set dir-in-before = $dst }
+			set @after-chdir  = {|dst| set dir-in-after  = $dst }
 			cd `+parse.Quote(dst)+`
 			put $dir-in-before $dir-in-after
 			`).Puts(dst, dst),
@@ -78,6 +78,6 @@ func saveWd() func() {
 		panic(err)
 	}
 	return func() {
-		testutil.MustChdir(wd)
+		must.Chdir(wd)
 	}
 }

@@ -52,7 +52,7 @@ func TestReadCode_ResetsStateBeforeReturning(t *testing.T) {
 
 	f.Stop()
 
-	if code := f.App.CodeArea().CopyState().Buffer; code != (tk.CodeBuffer{}) {
+	if code := f.App.ActiveWidget().(tk.CodeArea).CopyState().Buffer; code != (tk.CodeBuffer{}) {
 		t.Errorf("Editor state has CodeBuffer %v, want empty", code)
 	}
 }
@@ -109,7 +109,7 @@ func TestReadCode_CallsAfterReadline(t *testing.T) {
 func TestReadCode_FinalRedraw(t *testing.T) {
 	f := Setup(WithSpec(func(spec *AppSpec) {
 		spec.CodeAreaState.Buffer.Content = "code"
-		spec.State.Addon = tk.Label{Content: ui.T("addon")}
+		spec.State.Addons = []tk.Widget{tk.Label{Content: ui.T("addon")}}
 	}))
 
 	// Wait until the stable state.
@@ -187,7 +187,7 @@ func TestReadCode_LetsCodeAreaHandleEvents(t *testing.T) {
 func TestReadCode_ShowsHighlightedCode(t *testing.T) {
 	f := Setup(withHighlighter(
 		testHighlighter{
-			get: func(code string) (ui.Text, []error) {
+			get: func(code string) (ui.Text, []ui.Text) {
 				return ui.T(code, ui.FgRed), nil
 			},
 		}))
@@ -198,12 +198,12 @@ func TestReadCode_ShowsHighlightedCode(t *testing.T) {
 	f.TTY.TestBuffer(t, wantBuf)
 }
 
-func TestReadCode_ShowsErrorsFromHighlighter(t *testing.T) {
+func TestReadCode_ShowsErrorsFromHighlighter_ExceptInFinalRedraw(t *testing.T) {
 	f := Setup(withHighlighter(
 		testHighlighter{
-			get: func(code string) (ui.Text, []error) {
-				errors := []error{errors.New("ERR 1"), errors.New("ERR 2")}
-				return ui.T(code), errors
+			get: func(code string) (ui.Text, []ui.Text) {
+				tips := []ui.Text{ui.T("ERR 1"), ui.T("ERR 2")}
+				return ui.T(code), tips
 			},
 		}))
 	defer f.Stop()
@@ -215,12 +215,15 @@ func TestReadCode_ShowsErrorsFromHighlighter(t *testing.T) {
 		Write("ERR 1").Newline().
 		Write("ERR 2").Buffer()
 	f.TTY.TestBuffer(t, wantBuf)
+
+	feedInput(f.TTY, "\n")
+	f.TestTTY(t, "code", "\n", term.DotHere)
 }
 
 func TestReadCode_RedrawsOnLateUpdateFromHighlighter(t *testing.T) {
 	var styling ui.Styling
 	hl := testHighlighter{
-		get: func(code string) (ui.Text, []error) {
+		get: func(code string) (ui.Text, []ui.Text) {
 			return ui.T(code, styling), nil
 		},
 		lateUpdates: make(chan struct{}),
@@ -334,59 +337,111 @@ func TestReadCode_HidesRPromptInFinalRedrawIfNotPersistent(t *testing.T) {
 
 // Addon.
 
-func TestReadCode_LetsAddonHandleEvents(t *testing.T) {
+func TestReadCode_LetsLastWidgetHandleEvents(t *testing.T) {
 	f := Setup(WithSpec(func(spec *AppSpec) {
-		spec.State.Addon = tk.NewCodeArea(tk.CodeAreaSpec{
-			Prompt: func() ui.Text { return ui.T("addon> ") },
-		})
+		spec.State.Addons = []tk.Widget{
+			tk.NewCodeArea(tk.CodeAreaSpec{
+				Prompt: func() ui.Text { return ui.T("addon1> ") },
+			}),
+			tk.NewCodeArea(tk.CodeAreaSpec{
+				Prompt: func() ui.Text { return ui.T("addon2> ") },
+			}),
+		}
 	}))
 	defer f.Stop()
 
 	feedInput(f.TTY, "input")
 
 	wantBuf := bb().Newline(). // empty main code area
-					Write("addon> input").SetDotHere(). // addon
+					Write("addon1> ").Newline().         // addon1 did not handle inputs
+					Write("addon2> input").SetDotHere(). // addon2 handled inputs
 					Buffer()
 	f.TTY.TestBuffer(t, wantBuf)
 }
 
+func TestReadCode_PutsCursorOnLastWidgetWithFocus(t *testing.T) {
+	f := Setup(WithSpec(func(spec *AppSpec) {
+		spec.State.Addons = []tk.Widget{
+			testAddon{tk.Label{Content: ui.T("addon1> ")}, true},
+			testAddon{tk.Label{Content: ui.T("addon2> ")}, false},
+		}
+	}))
+	defer f.Stop()
+
+	f.TestTTY(t, "\n", // main code area is empty
+		term.DotHere, "addon1> ", "\n", // addon 1 has focus
+		"addon2> ", // addon 2 has no focus
+	)
+}
+
+func TestPushAddonPopAddon(t *testing.T) {
+	f := Setup()
+	defer f.Stop()
+
+	f.TestTTY(t /* nothing */)
+
+	f.App.PushAddon(tk.Label{Content: ui.T("addon1> ")})
+	f.App.Redraw()
+	f.TestTTY(t, "\n",
+		term.DotHere, "addon1> ")
+
+	f.App.PushAddon(tk.Label{Content: ui.T("addon2> ")})
+	f.App.Redraw()
+	f.TestTTY(t, "\n",
+		"addon1> \n",
+		term.DotHere, "addon2> ")
+
+	f.App.PopAddon()
+	f.App.Redraw()
+	f.TestTTY(t, "\n",
+		term.DotHere, "addon1> ")
+
+	f.App.PopAddon()
+	f.App.Redraw()
+	f.TestTTY(t /* nothing */)
+
+	// Popping addon when there is no addon does nothing
+	f.App.PopAddon()
+	// Add something to the codearea to ensure that we're not just looking at
+	// the previous buffer
+	f.TTY.Inject(term.K(' '))
+	f.TestTTY(t, " ", term.DotHere)
+}
+
+func TestReadCode_HidesAddonsWhenNotEnoughSpace(t *testing.T) {
+	f := Setup(
+		func(spec *AppSpec, tty TTYCtrl) {
+			spec.State.Addons = []tk.Widget{
+				tk.Label{Content: ui.T("addon1> ")},
+				tk.Label{Content: ui.T("addon2> ")}, // no space for this
+			}
+			tty.SetSize(2, 40)
+		})
+	defer f.Stop()
+
+	f.TestTTY(t,
+		"addon1> \n",
+		term.DotHere, "addon2> ")
+}
+
 type testAddon struct {
-	tk.Empty
+	tk.Label
 	focus bool
 }
 
 func (a testAddon) Focus() bool { return a.focus }
 
-func TestReadCode_RespectsAddonFocusMethod(t *testing.T) {
-	addon := testAddon{}
-	f := Setup(WithSpec(func(spec *AppSpec) { spec.State.Addon = &addon }))
-	defer f.Stop()
-
-	wantBuf := bb().
-		SetDotHere(). // main code area has focus
-		Newline().Buffer()
-	f.TTY.TestBuffer(t, wantBuf)
-
-	addon.focus = true
-	f.App.Redraw()
-
-	wantBuf = bb().
-		Newline().SetDotHere(). // addon has focus
-		Buffer()
-	f.TTY.TestBuffer(t, wantBuf)
-}
-
-// Misc features.
+// Event handling.
 
 func TestReadCode_UsesGlobalBindingsWithCodeAreaTarget(t *testing.T) {
 	testGlobalBindings(t, nil)
 }
 
 func TestReadCode_UsesGlobalBindingsWithAddonTarget(t *testing.T) {
-	testGlobalBindings(t, tk.Empty{})
+	testGlobalBindings(t, []tk.Widget{tk.Empty{}})
 }
 
-func testGlobalBindings(t *testing.T, addon tk.Widget) {
+func testGlobalBindings(t *testing.T, addons []tk.Widget) {
 	gotWidgetCh := make(chan tk.Widget, 1)
 	f := Setup(WithSpec(func(spec *AppSpec) {
 		spec.GlobalBindings = tk.MapBindings{
@@ -394,23 +449,17 @@ func testGlobalBindings(t *testing.T, addon tk.Widget) {
 				gotWidgetCh <- w
 			},
 		}
-		spec.State.Addon = addon
+		spec.State.Addons = addons
 	}))
 	defer f.Stop()
 
 	f.TTY.Inject(term.K('X', ui.Ctrl))
 	select {
 	case gotWidget := <-gotWidgetCh:
-		if addon != nil {
-			if gotWidget != addon {
-				t.Error("global binding not called with addon")
-			}
-		} else {
-			if gotWidget != f.App.CodeArea() {
-				t.Error("global binding not called with code area")
-			}
+		if gotWidget != f.App.ActiveWidget() {
+			t.Error("global binding not called with the active widget")
 		}
-	case <-time.After(testutil.ScaledMs(100)):
+	case <-time.After(testutil.Scaled(100 * time.Millisecond)):
 		t.Error("global binding not called")
 	}
 }
@@ -428,6 +477,17 @@ func TestReadCode_DoesNotUseGlobalBindingsIfHandledByWidget(t *testing.T) {
 	// Still handled by code area instead of global binding
 	f.TestTTY(t, "a", term.DotHere)
 }
+
+func TestReadCode_NotifiesAboutUnboundKey(t *testing.T) {
+	f := Setup()
+	defer f.Stop()
+
+	f.TTY.Inject(term.K(ui.F1))
+
+	f.TestTTYNotes(t, "Unbound key: F1")
+}
+
+// Misc features.
 
 func TestReadCode_TrimsBufferToMaxHeight(t *testing.T) {
 	f := Setup(func(spec *AppSpec, tty TTYCtrl) {
@@ -467,8 +527,8 @@ func TestReadCode_ShowNotes(t *testing.T) {
 	<-inHandler
 
 	// Write two notes, and unblock the event handler
-	f.App.Notify("note")
-	f.App.Notify("note 2")
+	f.App.Notify(ui.T("note"))
+	f.App.Notify(ui.T("note 2"))
 	unblock <- struct{}{}
 
 	// Test that the note is rendered onto the notes buffer.
@@ -535,11 +595,11 @@ func feedInput(ttyCtrl TTYCtrl, input string) {
 
 // A Highlighter implementation useful for testing.
 type testHighlighter struct {
-	get         func(code string) (ui.Text, []error)
+	get         func(code string) (ui.Text, []ui.Text)
 	lateUpdates chan struct{}
 }
 
-func (hl testHighlighter) Get(code string) (ui.Text, []error) {
+func (hl testHighlighter) Get(code string) (ui.Text, []ui.Text) {
 	return hl.get(code)
 }
 

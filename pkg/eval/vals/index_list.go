@@ -9,10 +9,10 @@ import (
 )
 
 var (
-	errIndexMustBeInteger = errors.New("index must must be integer")
+	errIndexMustBeInteger = errors.New("index must be integer")
 )
 
-func indexList(l List, rawIndex interface{}) (interface{}, error) {
+func indexList(l List, rawIndex any) (any, error) {
 	index, err := ConvertListIndex(rawIndex, l.Len())
 	if err != nil {
 		return nil, err
@@ -53,7 +53,7 @@ func adjustAndCheckIndex(i, n int, includeN bool) (int, error) {
 
 // ConvertListIndex parses a list index, check whether it is valid, and returns
 // the converted structure.
-func ConvertListIndex(rawIndex interface{}, n int) (*ListIndex, error) {
+func ConvertListIndex(rawIndex any, n int) (*ListIndex, error) {
 	switch rawIndex := rawIndex.(type) {
 	case int:
 		index, err := adjustAndCheckIndex(rawIndex, n, false)
@@ -101,7 +101,8 @@ func ConvertListIndex(rawIndex interface{}, n int) (*ListIndex, error) {
 }
 
 // Index = Number |
-//         Number ( ':' | '..' | '..=' ) Number
+//
+//	Number ( '..' | '..=' ) Number
 func parseIndexString(s string, n int) (slice bool, i int, j int, err error) {
 	low, sep, high := splitIndexString(s)
 	if sep == "" {
@@ -129,7 +130,11 @@ func parseIndexString(s string, n int) (slice bool, i int, j int, err error) {
 		}
 		if sep == "..=" {
 			// TODO: Handle j == MaxInt-1
-			j++
+			if j == -1 { // subtle corner case that is same as no high value
+				j = n
+			} else {
+				j++
+			}
 		}
 	}
 	// Two numbers
@@ -137,9 +142,6 @@ func parseIndexString(s string, n int) (slice bool, i int, j int, err error) {
 }
 
 func splitIndexString(s string) (low, sep, high string) {
-	if i := strings.IndexRune(s, ':'); i >= 0 {
-		return s[:i], ":", s[i+1:]
-	}
 	if i := strings.Index(s, "..="); i >= 0 {
 		return s[:i], "..=", s[i+3:]
 	}

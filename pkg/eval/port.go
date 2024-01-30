@@ -16,7 +16,7 @@ import (
 // Port conveys data stream. It always consists of a byte band and a channel band.
 type Port struct {
 	File      *os.File
-	Chan      chan interface{}
+	Chan      chan any
 	closeFile bool
 	closeChan bool
 
@@ -35,9 +35,9 @@ type Port struct {
 	readerGone *int32
 }
 
-// ErrNoValueOutput is thrown when writing to a pipe without a value output
-// component.
-var ErrNoValueOutput = errors.New("port has no value output")
+// ErrPortDoesNotSupportValueOutput is thrown when writing to a port that does
+// not support value output.
+var ErrPortDoesNotSupportValueOutput = errors.New("port does not support value output")
 
 // A closed channel, suitable as a value for Port.sendStop when there is no
 // reader to start with.
@@ -84,14 +84,14 @@ var (
 	DummyPorts = []*Port{DummyInputPort, DummyOutputPort, DummyOutputPort}
 )
 
-func getClosedChan() chan interface{} {
-	ch := make(chan interface{})
+func getClosedChan() chan any {
+	ch := make(chan any)
 	close(ch)
 	return ch
 }
 
-func getBlackholeChan() chan interface{} {
-	ch := make(chan interface{})
+func getBlackholeChan() chan any {
+	ch := make(chan any)
 	go func() {
 		for range ch {
 		}
@@ -112,12 +112,12 @@ func getDevNull() *os.File {
 // piped. The supplied functions are called on a separate goroutine with the
 // read ends of the value and byte components of the port. It also returns a
 // function to clean up the port and wait for the callbacks to finish.
-func PipePort(vCb func(<-chan interface{}), bCb func(*os.File)) (*Port, func(), error) {
+func PipePort(vCb func(<-chan any), bCb func(*os.File)) (*Port, func(), error) {
 	r, w, err := os.Pipe()
 	if err != nil {
 		return nil, nil, err
 	}
-	ch := make(chan interface{}, outputCaptureBufferSize)
+	ch := make(chan any, outputCaptureBufferSize)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -139,14 +139,43 @@ func PipePort(vCb func(<-chan interface{}), bCb func(*os.File)) (*Port, func(), 
 	return port, done, nil
 }
 
-// CapturePort returns an output *Port whose value and byte components are
-// both connected to an internal pipe that saves the output. It also returns a
+// CapturePort returns an output [*Port] whose value and byte components are
+// saved separately. It also returns a function to call to obtain the captured
+// output.
+func CapturePort() (*Port, func() ([]any, []byte), error) {
+	var values []any
+	var bytes []byte
+	port, done, err := PipePort(
+		func(ch <-chan any) {
+			for v := range ch {
+				values = append(values, v)
+			}
+		},
+		func(r *os.File) {
+			var err error
+			bytes, err = io.ReadAll(r)
+			if err != nil && err != io.EOF {
+				logger.Println("error on reading:", err)
+			}
+		},
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	return port, func() ([]any, []byte) {
+		done()
+		return values, bytes
+	}, nil
+}
+
+// ValueCapturePort returns an output [*Port] whose value and byte components
+// are saved, with bytes saved one string value per line. It also returns a
 // function to call to obtain the captured output.
-func CapturePort() (*Port, func() []interface{}, error) {
-	vs := []interface{}{}
+func ValueCapturePort() (*Port, func() []any, error) {
+	vs := []any{}
 	var m sync.Mutex
 	port, done, err := PipePort(
-		func(ch <-chan interface{}) {
+		func(ch <-chan any) {
 			for v := range ch {
 				m.Lock()
 				vs = append(vs, v)
@@ -174,13 +203,13 @@ func CapturePort() (*Port, func() []interface{}, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return port, func() []interface{} {
+	return port, func() []any {
 		done()
 		return vs
 	}, nil
 }
 
-// StringCapturePort is like CapturePort, but processes value outputs by
+// StringCapturePort is like [ValueCapturePort], but converts value outputs by
 // stringifying them and prepending an output marker.
 func StringCapturePort() (*Port, func() []string, error) {
 	var lines []string
@@ -191,7 +220,7 @@ func StringCapturePort() (*Port, func() []string, error) {
 		lines = append(lines, line)
 	}
 	port, done, err := PipePort(
-		func(ch <-chan interface{}) {
+		func(ch <-chan any) {
 			for v := range ch {
 				addLine("▶ " + vals.ToString(v))
 			}
@@ -227,12 +256,12 @@ const filePortChanSize = 32
 // each value to the file, prepending with a prefix. It also returns a cleanup
 // function, which should be called when the *Port is no longer needed.
 func FilePort(f *os.File, valuePrefix string) (*Port, func()) {
-	ch := make(chan interface{}, filePortChanSize)
+	ch := make(chan any, filePortChanSize)
 	relayDone := make(chan struct{})
 	go func() {
 		for v := range ch {
 			f.WriteString(valuePrefix)
-			f.WriteString(vals.Repr(v, vals.NoPretty))
+			f.WriteString(vals.ReprPlain(v))
 			f.WriteString("\n")
 		}
 		close(relayDone)
@@ -267,16 +296,16 @@ func PortsFromFiles(files [3]*os.File, prefix string) ([]*Port, func()) {
 // for the back-chanel signal that the reader of the channel has gone.
 type ValueOutput interface {
 	// Outputs a value. Returns errs.ReaderGone if the reader is gone.
-	Put(v interface{}) error
+	Put(v any) error
 }
 
 type valueOutput struct {
-	data      chan<- interface{}
+	data      chan<- any
 	sendStop  <-chan struct{}
 	sendError *error
 }
 
-func (vo valueOutput) Put(v interface{}) error {
+func (vo valueOutput) Put(v any) error {
 	select {
 	case vo.data <- v:
 		return nil

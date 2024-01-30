@@ -123,13 +123,13 @@ func TestColView_Handle(t *testing.T) {
 }
 
 func TestDistribute(t *testing.T) {
-	tt.Test(t, tt.Fn("distribute", distribute), tt.Table{
+	tt.Test(t, distribute,
 		// Nice integer distributions.
-		tt.Args(10, []int{1, 1}).Rets([]int{5, 5}),
-		tt.Args(10, []int{2, 3}).Rets([]int{4, 6}),
-		tt.Args(10, []int{1, 2, 2}).Rets([]int{2, 4, 4}),
+		Args(10, []int{1, 1}).Rets([]int{5, 5}),
+		Args(10, []int{2, 3}).Rets([]int{4, 6}),
+		Args(10, []int{1, 2, 2}).Rets([]int{2, 4, 4}),
 		// Approximate integer distributions.
-		tt.Args(10, []int{1, 1, 1}).Rets([]int{3, 3, 4}),
-		tt.Args(5, []int{1, 1, 1}).Rets([]int{1, 2, 2}),
-	})
+		Args(10, []int{1, 1, 1}).Rets([]int{3, 3, 4}),
+		Args(5, []int{1, 1, 1}).Rets([]int{1, 2, 2}),
+	)
 }

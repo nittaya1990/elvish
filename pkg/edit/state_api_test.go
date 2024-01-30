@@ -28,7 +28,7 @@ func TestDot(t *testing.T) {
 	f := setup(t)
 
 	f.SetCodeBuffer(tk.CodeBuffer{Content: "code", Dot: 4})
-	evals(f.Evaler, `edit:-dot = 0`)
+	evals(f.Evaler, `set edit:-dot = 0`)
 
 	testCodeBuffer(t, f.Editor, tk.CodeBuffer{Content: "code", Dot: 0})
 }
@@ -36,14 +36,14 @@ func TestDot(t *testing.T) {
 func TestCurrentCommand(t *testing.T) {
 	f := setup(t)
 
-	evals(f.Evaler, `edit:current-command = code`)
+	evals(f.Evaler, `set edit:current-command = code`)
 
 	testCodeBuffer(t, f.Editor, tk.CodeBuffer{Content: "code", Dot: 4})
 }
 
 func testCodeBuffer(t *testing.T, ed *Editor, wantBuf tk.CodeBuffer) {
 	t.Helper()
-	if buf := ed.app.CodeArea().CopyState().Buffer; buf != wantBuf {
+	if buf := codeArea(ed.app).CopyState().Buffer; buf != wantBuf {
 		t.Errorf("content = %v, want %v", buf, wantBuf)
 	}
 }

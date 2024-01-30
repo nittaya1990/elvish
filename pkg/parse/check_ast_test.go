@@ -45,7 +45,7 @@ type ast struct {
 //
 // If the found value satisfied none of the above conditions, it is checked
 // against the wanted value using reflect.DeepEqual.
-type fs map[string]interface{}
+type fs map[string]any
 
 // checkAST checks an AST against a specification.
 func checkAST(n Node, want ast) error {
@@ -84,8 +84,9 @@ func checkAST(n Node, want ast) error {
 			}
 		} else {
 			// Not specified. Check if got is a zero value of its type.
-			if !reflect.DeepEqual(got, reflect.Zero(reflect.TypeOf(got)).Interface()) {
-				return fmt.Errorf("want zero, got %v (field %s of: %s)", got, fieldname, summary(n))
+			zero := reflect.Zero(reflect.TypeOf(got)).Interface()
+			if !reflect.DeepEqual(got, zero) {
+				return fmt.Errorf("want %v, got %v (field %s of: %s)", zero, got, fieldname, summary(n))
 			}
 		}
 	}
@@ -94,7 +95,7 @@ func checkAST(n Node, want ast) error {
 }
 
 // checkField checks a field against a field specification.
-func checkField(got interface{}, want interface{}, ctx string) error {
+func checkField(got any, want any, ctx string) error {
 	// Want nil.
 	if want == nil {
 		if !reflect.ValueOf(got).IsNil() {
@@ -131,7 +132,7 @@ func checkField(got interface{}, want interface{}, ctx string) error {
 	return nil
 }
 
-func checkNodeInField(got Node, want interface{}) error {
+func checkNodeInField(got Node, want any) error {
 	switch want := want.(type) {
 	case string:
 		text := SourceText(got)

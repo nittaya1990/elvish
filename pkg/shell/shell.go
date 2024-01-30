@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -15,10 +16,10 @@ import (
 	"src.elv.sh/pkg/eval"
 	"src.elv.sh/pkg/logutil"
 	"src.elv.sh/pkg/mods"
-	"src.elv.sh/pkg/mods/unix"
 	"src.elv.sh/pkg/parse"
 	"src.elv.sh/pkg/prog"
 	"src.elv.sh/pkg/sys"
+	"src.elv.sh/pkg/ui"
 )
 
 var logger = logutil.GetLogger("[shell] ")
@@ -26,78 +27,113 @@ var logger = logutil.GetLogger("[shell] ")
 // Program is the shell subprogram.
 type Program struct {
 	ActivateDaemon daemondefs.ActivateFunc
+
+	codeInArg   bool
+	compileOnly bool
+	noRC        bool
+	rc          string
+	json        *bool
+	daemonPaths *prog.DaemonPaths
 }
 
-func (p Program) ShouldRun(*prog.Flags) bool { return true }
+func (p *Program) RegisterFlags(fs *prog.FlagSet) {
+	// Support -i so that programs that expect shells to support it (like
+	// "script") don't error when they invoke Elvish.
+	fs.Bool("i", false,
+		"A no-op flag, introduced for POSIX compatibility")
+	fs.BoolVar(&p.codeInArg, "c", false,
+		"Treat the first argument as code to execute")
+	fs.BoolVar(&p.compileOnly, "compileonly", false,
+		"Parse and compile Elvish code without executing it")
+	fs.BoolVar(&p.noRC, "norc", false,
+		"Don't read the RC file when running interactively")
+	fs.StringVar(&p.rc, "rc", "",
+		"Path to the RC file when running interactively")
 
-func (p Program) Run(fds [3]*os.File, f *prog.Flags, args []string) error {
-	cleanup1 := IncSHLVL()
+	p.json = fs.JSON()
+	if p.ActivateDaemon != nil {
+		p.daemonPaths = fs.DaemonPaths()
+	}
+}
+
+func (p *Program) Run(fds [3]*os.File, args []string) error {
+	cleanup1 := incSHLVL()
 	defer cleanup1()
-	cleanup2 := initTTYAndSignal(fds[2])
+	cleanup2 := initSignal(fds)
 	defer cleanup2()
 
-	ev := MakeEvaler(fds[2])
+	// https://no-color.org
+	ui.NoColor = os.Getenv(env.NO_COLOR) != ""
+	interactive := len(args) == 0
+	ev := p.makeEvaler(fds[2], interactive)
+	defer ev.PreExit()
 
-	if len(args) > 0 {
+	if !interactive {
 		exit := script(
 			ev, fds, args, &scriptCfg{
-				Cmd: f.CodeInArg, CompileOnly: f.CompileOnly, JSON: f.JSON})
+				Cmd: p.codeInArg, CompileOnly: p.compileOnly, JSON: *p.json})
 		return prog.Exit(exit)
 	}
 
 	var spawnCfg *daemondefs.SpawnConfig
 	if p.ActivateDaemon != nil {
 		var err error
-		spawnCfg, err = daemonPaths(f)
+		spawnCfg, err = daemonPaths(p.daemonPaths, fds[2])
 		if err != nil {
 			fmt.Fprintln(fds[2], "Warning:", err)
 			fmt.Fprintln(fds[2], "Storage daemon may not function.")
 		}
 	}
 
-	rc := ""
-	switch {
-	case f.NoRc:
-	// Leave rc empty
-	case f.RC != "":
-		// Use explicit -rc flag value
-		rc = f.RC
-	default:
-		// Use default path to rc.elv
-		var err error
-		rc, err = rcPath()
-		if err != nil {
-			fmt.Fprintln(fds[2], "Warning:", err)
-		}
-	}
-
 	interact(ev, fds, &interactCfg{
-		RC:             rc,
+		RC:             ev.EffectiveRcPath,
 		ActivateDaemon: p.ActivateDaemon, SpawnConfig: spawnCfg})
 	return nil
 }
 
-// MakeEvaler creates an Evaler, sets the module search directories and installs
-// all the standard builtin modules. It writes a warning message to the supplied
-// Writer if it could not initialize module search directories.
-func MakeEvaler(stderr io.Writer) *eval.Evaler {
+// Creates an Evaler, sets the module search directories and installs all the
+// standard builtin modules.
+//
+// It writes a warning message to the supplied Writer if it could not initialize
+// module search directories.
+func (p *Program) makeEvaler(stderr io.Writer, interactive bool) *eval.Evaler {
 	ev := eval.NewEvaler()
-	libs, libInstall, err := libPaths()
+
+	var errRc error
+	ev.RcPath, errRc = rcPath(stderr)
+	switch {
+	case !interactive || p.noRC:
+		// Leave ev.ActualRcPath empty
+	case p.rc != "":
+		// Use explicit -rc flag value
+		var err error
+		ev.EffectiveRcPath, err = filepath.Abs(p.rc)
+		if err != nil {
+			fmt.Fprintln(stderr, "Warning:", err)
+		}
+	default:
+		if errRc == nil {
+			// Use default path stored in ev.RcPath
+			ev.EffectiveRcPath = ev.RcPath
+		} else {
+			fmt.Fprintln(stderr, "Warning:", errRc)
+		}
+	}
+
+	libs, err := libPaths(stderr)
 	if err != nil {
-		fmt.Fprintln(stderr, "Warning:", err)
+		fmt.Fprintln(stderr, "Warning: resolving lib paths:", err)
+	} else {
+		ev.LibDirs = libs
 	}
-	ev.SetLibDirs(libs)
-	ev.SetLibInstallDir(libInstall)
+
 	mods.AddTo(ev)
-	if unix.ExposeUnixNs {
-		ev.AddModule("unix", unix.Ns)
-	}
 	return ev
 }
 
-// IncSHLVL increments the SHLVL environment variable. It returns a function to
-// restore the original value of SHLVL.
-func IncSHLVL() func() {
+// Increments the SHLVL environment variable. It returns a function to restore
+// the original value of SHLVL.
+func incSHLVL() func() {
 	oldValue, hadValue := os.LookupEnv(env.SHLVL)
 	i, err := strconv.Atoi(oldValue)
 	if err != nil {
@@ -112,29 +148,33 @@ func IncSHLVL() func() {
 	}
 }
 
-func initTTYAndSignal(stderr io.Writer) func() {
-	restoreTTY := term.SetupGlobal()
-
+func initSignal(fds [3]*os.File) func() {
 	sigCh := sys.NotifySignals()
 	go func() {
 		for sig := range sigCh {
 			logger.Println("signal", sig)
-			handleSignal(sig, stderr)
+			handleSignal(sig, fds[2])
 		}
 	}()
 
 	return func() {
 		signal.Stop(sigCh)
-		restoreTTY()
+		close(sigCh)
 	}
 }
 
-func evalInTTY(ev *eval.Evaler, fds [3]*os.File, src parse.Source) (float64, error) {
+func evalInTTY(fds [3]*os.File, ev *eval.Evaler, ed editor, src parse.Source) error {
 	start := time.Now()
 	ports, cleanup := eval.PortsFromFiles(fds, ev.ValuePrefix())
 	defer cleanup()
+	restore := term.SetupForEval(fds[0], fds[1])
+	defer restore()
+	ctx, done := eval.ListenInterrupts()
 	err := ev.Eval(src, eval.EvalCfg{
-		Ports: ports, Interrupt: eval.ListenInterrupts, PutInFg: true})
-	end := time.Now()
-	return end.Sub(start).Seconds(), err
+		Ports: ports, Interrupts: ctx, PutInFg: true})
+	done()
+	if ed != nil {
+		ed.RunAfterCommandHooks(src, time.Since(start).Seconds(), err)
+	}
+	return err
 }

@@ -1,6 +1,8 @@
 package edit
 
 import (
+	"strings"
+
 	"src.elv.sh/pkg/eval"
 	"src.elv.sh/pkg/eval/errs"
 	"src.elv.sh/pkg/eval/vals"
@@ -8,34 +10,16 @@ import (
 )
 
 func initVarsAPI(ed *Editor, nb eval.NsBuilder) {
-	nb.AddGoFns("<edit>:", map[string]interface{}{
+	nb.AddGoFns(map[string]any{
 		"add-var":  addVar,
 		"add-vars": addVars,
+		"del-var":  delVar,
+		"del-vars": delVars,
 	})
 }
 
-//elvdoc:fn add-var
-//
-// ```elvish
-// edit:add-var $name $value
-// ```
-//
-// Declares a new variable in the REPL. The new variable becomes available
-// during the next REPL cycle.
-//
-// Equivalent to running `var $name = $value` at the REPL, but `$name` can be
-// dynamic.
-//
-// Example:
-//
-// ```elvish-transcript
-// ~> edit:add-var foo bar
-// ~> put $foo
-// ▶ bar
-// ```
-
-func addVar(fm *eval.Frame, name string, val interface{}) error {
-	if !eval.IsUnqualified(name) {
+func addVar(fm *eval.Frame, name string, val any) error {
+	if !isUnqualified(name) {
 		return errs.BadValue{
 			What:  "name argument to edit:add-var",
 			Valid: "unqualified variable name", Actual: name}
@@ -45,21 +29,22 @@ func addVar(fm *eval.Frame, name string, val interface{}) error {
 	if err != nil {
 		return err
 	}
-	fm.Evaler.AddGlobal(eval.NsBuilder{name: vars.FromInit(val)}.Ns())
+	fm.Evaler.ExtendGlobal(eval.BuildNs().AddVar(name, vars.FromInit(val)))
 	return nil
 }
 
-//elvdoc:fn add-vars
-//
-// ```elvish
-// edit:add-vars $map
-// ```
-//
-// Takes a map from strings to arbitrary values. Equivalent to calling
-// `edit:add-var` for each key-value pair in the map.
+func delVar(fm *eval.Frame, name string) error {
+	if !isUnqualified(name) {
+		return errs.BadValue{
+			What:  "name argument to edit:del-var",
+			Valid: "unqualified variable name", Actual: name}
+	}
+	fm.Evaler.DeleteFromGlobal(map[string]struct{}{name: {}})
+	return nil
+}
 
 func addVars(fm *eval.Frame, m vals.Map) error {
-	nb := eval.NsBuilder{}
+	nb := eval.BuildNs()
 	for it := m.Iterator(); it.HasElem(); it.Next() {
 		k, val := it.Elem()
 		name, ok := k.(string)
@@ -68,7 +53,7 @@ func addVars(fm *eval.Frame, m vals.Map) error {
 				What:  "key of argument to edit:add-vars",
 				Valid: "string", Actual: vals.Kind(k)}
 		}
-		if !eval.IsUnqualified(name) {
+		if !isUnqualified(name) {
 			return errs.BadValue{
 				What:  "key of argument to edit:add-vars",
 				Valid: "unqualified variable name", Actual: name}
@@ -78,8 +63,34 @@ func addVars(fm *eval.Frame, m vals.Map) error {
 		if err != nil {
 			return err
 		}
-		nb[name] = variable
+		nb.AddVar(name, variable)
 	}
-	fm.Evaler.AddGlobal(nb.Ns())
+	fm.Evaler.ExtendGlobal(nb)
 	return nil
+}
+
+func delVars(fm *eval.Frame, m vals.List) error {
+	names := make(map[string]struct{}, m.Len())
+	for it := m.Iterator(); it.HasElem(); it.Next() {
+		n := it.Elem()
+		name, ok := n.(string)
+		if !ok {
+			return errs.BadValue{
+				What:  "element of argument to edit:del-vars",
+				Valid: "string", Actual: vals.Kind(n)}
+		}
+		if !isUnqualified(name) {
+			return errs.BadValue{
+				What:  "element of argument to edit:del-vars",
+				Valid: "unqualified variable name", Actual: name}
+		}
+		names[name] = struct{}{}
+	}
+	fm.Evaler.DeleteFromGlobal(names)
+	return nil
+}
+
+func isUnqualified(name string) bool {
+	i := strings.IndexByte(name, ':')
+	return i == -1 || i == len(name)-1
 }

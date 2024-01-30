@@ -9,18 +9,16 @@ import (
 
 // A net/rpc service for the daemon.
 type service struct {
-	store storedefs.Store
-	err   error
+	version int
+	store   storedefs.Store
+	err     error
 }
 
 // Implementations of RPC methods.
 
 // Version returns the API version number.
 func (s *service) Version(req *api.VersionRequest, res *api.VersionResponse) error {
-	if s.err != nil {
-		return s.err
-	}
-	res.Version = api.Version
+	res.Version = s.version
 	return nil
 }
 
@@ -113,27 +111,4 @@ func (s *service) Dirs(req *api.DirsRequest, res *api.DirsResponse) error {
 	dirs, err := s.store.Dirs(req.Blacklist)
 	res.Dirs = dirs
 	return err
-}
-
-func (s *service) SharedVar(req *api.SharedVarRequest, res *api.SharedVarResponse) error {
-	if s.err != nil {
-		return s.err
-	}
-	value, err := s.store.SharedVar(req.Name)
-	res.Value = value
-	return err
-}
-
-func (s *service) SetSharedVar(req *api.SetSharedVarRequest, res *api.SetSharedVarResponse) error {
-	if s.err != nil {
-		return s.err
-	}
-	return s.store.SetSharedVar(req.Name, req.Value)
-}
-
-func (s *service) DelSharedVar(req *api.DelSharedVarRequest, res *api.DelSharedVarResponse) error {
-	if s.err != nil {
-		return s.err
-	}
-	return s.store.DelSharedVar(req.Name)
 }

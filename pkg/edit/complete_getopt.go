@@ -10,89 +10,10 @@ import (
 	"src.elv.sh/pkg/eval/vals"
 	"src.elv.sh/pkg/getopt"
 	"src.elv.sh/pkg/parse"
-	"src.elv.sh/pkg/persistent/hashmap"
+	"src.elv.sh/pkg/ui"
 )
 
-//elvdoc:fn complete-getopt
-//
-// ```elvish
-// edit:complete-getopt $args $opt-specs $arg-handlers
-// ```
-// Produces completions according to a specification of accepted command-line
-// options (both short and long options are handled), positional handler
-// functions for each command position, and the current arguments in the command
-// line. The arguments are as follows:
-//
-// * `$args` is an array containing the current arguments in the command line
-//   (without the command itself). These are the arguments as passed to the
-//   [Argument Completer](#argument-completer) function.
-//
-// * `$opt-specs` is an array of maps, each one containing the definition of
-//   one possible command-line option. Matching options will be provided as
-//   completions when the last element of `$args` starts with a dash, but not
-//   otherwise. Each map can contain the following keys (at least one of `short`
-//   or `long` needs to be specified):
-//
-//   - `short` contains the one-letter short option, if any, without the dash.
-//
-//   - `long` contains the long option name, if any, without the initial two
-//     dashes.
-//
-//   - `arg-optional`, if set to `$true`, specifies that the option receives an
-//     optional argument.
-//
-//   - `arg-required`, if set to `$true`, specifies that the option receives a
-//     mandatory argument. Only one of `arg-optional` or `arg-required` can be
-//     set to `$true`.
-//
-//   - `desc` can be set to a human-readable description of the option which
-//     will be displayed in the completion menu.
-//
-//   - `completer` can be set to a function to generate possible completions for
-//     the option argument. The function receives as argument the element at
-//     that position and return zero or more candidates.
-//
-// * `$arg-handlers` is an array of functions, each one returning the possible
-//   completions for that position in the arguments. Each function receives
-//   as argument the last element of `$args`, and should return zero or more
-//   possible values for the completions at that point. The returned values can
-//   be plain strings or the output of `edit:complex-candidate`. If the last
-//   element of the list is the string `...`, then the last handler is reused
-//   for all following arguments.
-//
-// Example:
-//
-// ```elvish-transcript
-// ~> fn complete [@args]{
-//      opt-specs = [ [&short=a &long=all &desc="Show all"]
-//                    [&short=n &desc="Set name" &arg-required=$true
-//                     &completer= [_]{ put name1 name2 }] ]
-//      arg-handlers = [ [_]{ put first1 first2 }
-//                       [_]{ put second1 second2 } ... ]
-//      edit:complete-getopt $args $opt-specs $arg-handlers
-//    }
-// ~> complete ''
-// ▶ first1
-// ▶ first2
-// ~> complete '-'
-// ▶ (edit:complex-candidate -a &display='-a (Show all)')
-// ▶ (edit:complex-candidate --all &display='--all (Show all)')
-// ▶ (edit:complex-candidate -n &display='-n (Set name)')
-// ~> complete -n ''
-// ▶ name1
-// ▶ name2
-// ~> complete -a ''
-// ▶ first1
-// ▶ first2
-// ~> complete arg1 ''
-// ▶ second1
-// ▶ second2
-// ~> complete arg1 arg2 ''
-// ▶ second1
-// ▶ second2
-// ```
-
-func completeGetopt(fm *eval.Frame, vArgs, vOpts, vArgHandlers interface{}) error {
+func completeGetopt(fm *eval.Frame, vArgs, vOpts, vArgHandlers any) error {
 	args, err := parseGetoptArgs(vArgs)
 	if err != nil {
 		return err
@@ -106,39 +27,38 @@ func completeGetopt(fm *eval.Frame, vArgs, vOpts, vArgHandlers interface{}) erro
 		return err
 	}
 
-	// TODO(xiaq): Make the Config field configurable
-	g := getopt.Getopt{Options: opts.opts, Config: getopt.GNUGetoptLong}
-	_, parsedArgs, ctx := g.Parse(args)
+	// TODO: Make the Config field configurable
+	_, parsedArgs, ctx := getopt.Complete(args, opts.opts, getopt.GNU)
 
 	out := fm.ValueOutput()
-	putShortOpt := func(opt *getopt.Option) error {
+	putShortOpt := func(opt *getopt.OptionSpec) error {
 		c := complexItem{Stem: "-" + string(opt.Short)}
 		if d, ok := opts.desc[opt]; ok {
 			if e, ok := opts.argDesc[opt]; ok {
-				c.Display = c.Stem + " " + e + " (" + d + ")"
+				c.Display = ui.T(c.Stem + " " + e + " (" + d + ")")
 			} else {
-				c.Display = c.Stem + " (" + d + ")"
+				c.Display = ui.T(c.Stem + " (" + d + ")")
 			}
 		}
 		return out.Put(c)
 	}
-	putLongOpt := func(opt *getopt.Option) error {
+	putLongOpt := func(opt *getopt.OptionSpec) error {
 		c := complexItem{Stem: "--" + opt.Long}
 		if d, ok := opts.desc[opt]; ok {
 			if e, ok := opts.argDesc[opt]; ok {
-				c.Display = c.Stem + " " + e + " (" + d + ")"
+				c.Display = ui.T(c.Stem + " " + e + " (" + d + ")")
 			} else {
-				c.Display = c.Stem + " (" + d + ")"
+				c.Display = ui.T(c.Stem + " (" + d + ")")
 			}
 		}
 		return out.Put(c)
 	}
-	call := func(fn eval.Callable, args ...interface{}) error {
+	call := func(fn eval.Callable, args ...any) error {
 		return fn.Call(fm, args, eval.NoOpts)
 	}
 
 	switch ctx.Type {
-	case getopt.NewOptionOrArgument, getopt.Argument:
+	case getopt.OptionOrArgument, getopt.Argument:
 		// Find argument handler.
 		var argHandler eval.Callable
 		if len(parsedArgs) < len(argHandlers) {
@@ -150,7 +70,7 @@ func completeGetopt(fm *eval.Frame, vArgs, vOpts, vArgHandlers interface{}) erro
 			return call(argHandler, ctx.Text)
 		}
 		// TODO(xiaq): Notify that there is no suitable argument completer.
-	case getopt.NewOption:
+	case getopt.AnyOption:
 		for _, opt := range opts.opts {
 			if opt.Short != 0 {
 				err := putShortOpt(opt)
@@ -165,18 +85,9 @@ func completeGetopt(fm *eval.Frame, vArgs, vOpts, vArgHandlers interface{}) erro
 				}
 			}
 		}
-	case getopt.NewLongOption:
-		for _, opt := range opts.opts {
-			if opt.Long != "" {
-				err := putLongOpt(opt)
-				if err != nil {
-					return err
-				}
-			}
-		}
 	case getopt.LongOption:
 		for _, opt := range opts.opts {
-			if strings.HasPrefix(opt.Long, ctx.Text) {
+			if opt.Long != "" && strings.HasPrefix(opt.Long, ctx.Text) {
 				err := putLongOpt(opt)
 				if err != nil {
 					return err
@@ -194,7 +105,7 @@ func completeGetopt(fm *eval.Frame, vArgs, vOpts, vArgHandlers interface{}) erro
 			}
 		}
 	case getopt.OptionArgument:
-		gen := opts.argGenerator[ctx.Option.Option]
+		gen := opts.argGenerator[ctx.Option.Spec]
 		if gen != nil {
 			return call(gen, ctx.Option.Argument)
 		}
@@ -204,10 +115,10 @@ func completeGetopt(fm *eval.Frame, vArgs, vOpts, vArgHandlers interface{}) erro
 
 // TODO(xiaq): Simplify most of the parsing below with reflection.
 
-func parseGetoptArgs(v interface{}) ([]string, error) {
+func parseGetoptArgs(v any) ([]string, error) {
 	var args []string
 	var err error
-	errIterate := vals.Iterate(v, func(v interface{}) bool {
+	errIterate := vals.Iterate(v, func(v any) bool {
 		arg, ok := v.(string)
 		if !ok {
 			err = fmt.Errorf("arg should be string, got %s", vals.Kind(v))
@@ -223,26 +134,26 @@ func parseGetoptArgs(v interface{}) ([]string, error) {
 }
 
 type parsedOptSpecs struct {
-	opts         []*getopt.Option
-	desc         map[*getopt.Option]string
-	argDesc      map[*getopt.Option]string
-	argGenerator map[*getopt.Option]eval.Callable
+	opts         []*getopt.OptionSpec
+	desc         map[*getopt.OptionSpec]string
+	argDesc      map[*getopt.OptionSpec]string
+	argGenerator map[*getopt.OptionSpec]eval.Callable
 }
 
-func parseGetoptOptSpecs(v interface{}) (parsedOptSpecs, error) {
+func parseGetoptOptSpecs(v any) (parsedOptSpecs, error) {
 	result := parsedOptSpecs{
-		nil, map[*getopt.Option]string{},
-		map[*getopt.Option]string{}, map[*getopt.Option]eval.Callable{}}
+		nil, map[*getopt.OptionSpec]string{},
+		map[*getopt.OptionSpec]string{}, map[*getopt.OptionSpec]eval.Callable{}}
 
 	var err error
-	errIterate := vals.Iterate(v, func(v interface{}) bool {
-		m, ok := v.(hashmap.Map)
+	errIterate := vals.Iterate(v, func(v any) bool {
+		m, ok := v.(vals.Map)
 		if !ok {
 			err = fmt.Errorf("opt should be map, got %s", vals.Kind(v))
 			return false
 		}
 
-		opt := &getopt.Option{}
+		opt := &getopt.OptionSpec{}
 
 		getStringField := func(k string) (string, bool, error) {
 			v, ok := m.Index(k)
@@ -282,8 +193,7 @@ func parseGetoptOptSpecs(v interface{}) (parsedOptSpecs, error) {
 			r, size := utf8.DecodeRuneInString(s)
 			if r == utf8.RuneError || size != len(s) {
 				err = fmt.Errorf(
-					"short option should be exactly one rune, got %v",
-					parse.Quote(s))
+					"short should be exactly one rune, got %v", parse.Quote(s))
 				return false
 			}
 			opt.Short = r
@@ -319,9 +229,9 @@ func parseGetoptOptSpecs(v interface{}) (parsedOptSpecs, error) {
 				"opt cannot have both arg-required and arg-optional")
 			return false
 		case argRequired:
-			opt.HasArg = getopt.RequiredArgument
+			opt.Arity = getopt.RequiredArgument
 		case argOptional:
-			opt.HasArg = getopt.OptionalArgument
+			opt.Arity = getopt.OptionalArgument
 		}
 
 		if s, ok, errGet := getStringField("desc"); ok {
@@ -352,11 +262,11 @@ func parseGetoptOptSpecs(v interface{}) (parsedOptSpecs, error) {
 	return result, err
 }
 
-func parseGetoptArgHandlers(v interface{}) ([]eval.Callable, bool, error) {
+func parseGetoptArgHandlers(v any) ([]eval.Callable, bool, error) {
 	var argHandlers []eval.Callable
 	var variadic bool
 	var err error
-	errIterate := vals.Iterate(v, func(v interface{}) bool {
+	errIterate := vals.Iterate(v, func(v any) bool {
 		sv, ok := v.(string)
 		if ok {
 			if sv == "..." {

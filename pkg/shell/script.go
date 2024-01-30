@@ -10,6 +10,7 @@ import (
 
 	"src.elv.sh/pkg/diag"
 	"src.elv.sh/pkg/eval"
+	"src.elv.sh/pkg/eval/vals"
 	"src.elv.sh/pkg/parse"
 )
 
@@ -23,7 +24,7 @@ type scriptCfg struct {
 // Executes a shell script.
 func script(ev *eval.Evaler, fds [3]*os.File, args []string, cfg *scriptCfg) int {
 	arg0 := args[0]
-	ev.SetArgs(args[1:])
+	ev.Args = vals.MakeListSlice(args[1:])
 
 	var name, code string
 	if cfg.Cmd {
@@ -46,7 +47,7 @@ func script(ev *eval.Evaler, fds [3]*os.File, args []string, cfg *scriptCfg) int
 
 	src := parse.Source{Name: name, Code: code, IsFile: true}
 	if cfg.CompileOnly {
-		parseErr, compileErr := ev.Check(src, fds[2])
+		parseErr, _, compileErr := ev.Check(src, fds[2])
 		if cfg.JSON {
 			fmt.Fprintf(fds[1], "%s\n", errorsToJSON(parseErr, compileErr))
 		} else {
@@ -61,7 +62,7 @@ func script(ev *eval.Evaler, fds [3]*os.File, args []string, cfg *scriptCfg) int
 			return 2
 		}
 	} else {
-		_, err := evalInTTY(ev, fds, src)
+		err := evalInTTY(fds, ev, nil, src)
 		if err != nil {
 			diag.ShowError(fds[2], err)
 			return 2
@@ -93,18 +94,15 @@ type errorInJSON struct {
 }
 
 // Converts parse and compilation errors into JSON.
-func errorsToJSON(parseErr *parse.Error, compileErr *diag.Error) []byte {
+func errorsToJSON(parseErr, compileErr error) []byte {
 	var converted []errorInJSON
-	if parseErr != nil {
-		for _, e := range parseErr.Entries {
-			converted = append(converted,
-				errorInJSON{e.Context.Name, e.Context.From, e.Context.To, e.Message})
-		}
-	}
-	if compileErr != nil {
+	for _, e := range parse.UnpackErrors(parseErr) {
 		converted = append(converted,
-			errorInJSON{compileErr.Context.Name,
-				compileErr.Context.From, compileErr.Context.To, compileErr.Message})
+			errorInJSON{e.Context.Name, e.Context.From, e.Context.To, e.Message})
+	}
+	for _, e := range eval.UnpackCompilationErrors(compileErr) {
+		converted = append(converted,
+			errorInJSON{e.Context.Name, e.Context.From, e.Context.To, e.Message})
 	}
 
 	jsonError, errMarshal := json.Marshal(converted)

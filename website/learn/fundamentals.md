@@ -51,7 +51,13 @@ switches, which usually do not contain spaces or special characters.
 
 ## Editing the command line
 
-TODO
+TODO: This requires a lot more detail.
+
+A starting point is to run `pprint $edit:insert:binding` to show the bindings
+for the normal insert mode. There are many more modes with their own bindings.
+See the [`edit`](../ref/edit.html) module documentation for more details. See
+also the [`readline-binding`](../ref/readline-binding.html) module that provides
+key bindings similar to the default bindings provided by Bash.
 
 ## Builtin and external commands
 
@@ -70,14 +76,23 @@ comes first, making the syntax a bit different from common mathematical
 notations:
 
 ```elvish-transcript
+~> + 17 28 # addition
+▶ (num 45)
 ~> * 17 28 # multiplication
-▶ 476
-~> ^ 2 10 # exponention
-▶ 1024
+▶ (num 476)
 ```
 
 The commands above all come with Elvish; they are **builtin commands**. There
 are [many more](../ref/builtin.html) of them.
+
+Some builtin commands are in importabled modules. For example, the command to
+compute exponention lives in the `math:` module:
+
+```elvish-transcript
+~> use math
+~> math:pow 2 10
+▶ (num 1024)
+```
 
 Another kind of commands is **external commands**. They are separate programs
 from Elvish, and either come with the operating system or are installed by you
@@ -121,18 +136,17 @@ can just retype the command:
 
 The command is short, but still, it can become a chore if you want to run it
 repeatedly. Fortunately, Elvish remembers all the commands you have typed; you
-can just ask Elvish to recall it by pressing <span class="key">Up</span>:
+can just ask Elvish to recall it by pressing <kbd>Up</kbd>:
 
-@ttyshot fundamentals/history-1
+@ttyshot learn/fundamentals/history-1
 
 This will give you the last command you have run. However, it may have been a
 while when you have last run the `randint` command, and this will not give you
-what you need. You can either continue pressing <span class="key">Up</span>
-until you find the command, or you can give Elvish a hint by typing some
-characters from the command line you want, e.g. `ra`, before pressing <span
-class="key">Up</span>:
+what you need. You can either continue pressing <kbd>Up</kbd> until you find the
+command, or you can give Elvish a hint by typing some characters from the
+command line you want, e.g. `ra`, before pressing <kbd>Up</kbd>:
 
-@ttyshot fundamentals/history-2
+@ttyshot learn/fundamentals/history-2
 
 Another way to rerun commands is saving them in a **script**, which is simply a
 text file containing the commands you want to run. Using your favorite text
@@ -168,7 +182,7 @@ Which works until you want a different message. One way to solve this is using
 **variables**:
 
 ```elvish-transcript
-~> name = John
+~> var name = John
 ~> echo Hello, $name!
 Hello, John!
 ```
@@ -178,7 +192,7 @@ the previous command. To greet a different person, you can just change the value
 of the variable, and the command doesn't need to change:
 
 ```elvish-transcript
-~> name = Jane
+~> var name = Jane
 ~> echo Hello, $name!
 Hello, Jane!
 ```
@@ -187,7 +201,7 @@ Using variables has another advantage: after defining a variable, you can use it
 as many times as you want:
 
 ```elvish-transcript
-~> name = Jane
+~> var name = Jane
 ~> echo Hello, $name!
 Hello, Jane!
 ~> echo Bye, $name!
@@ -221,7 +235,7 @@ store a **list** of values in one variable; a list can be written by surrounding
 some values with `[` and `]`. For example:
 
 ```elvish-transcript
-~> list = [linux bsd macos windows]
+~> var list = [linux bsd macos windows]
 ~> echo $list
 [linux bsd macos windows]
 ```
@@ -294,8 +308,8 @@ Since `$args` is a list, we can retrieve the individual elements with
 `$args[0]`, `$args[1]`, etc.. Let's rewrite our greet-and-bye script, taking the
 name as an argument. Put this in `greet-and-bye.elv`:
 
-```
-name = $args[0]
+```elvish
+var name = $args[0]
 echo Hello, $name!
 echo Bye, $name!
 ```
@@ -324,7 +338,7 @@ Linux
 ```
 
 (If you are running macOS, `uname` will print `Darwin`, the
-[open-source core](<https://en.wikipedia.org/wiki/Darwin_(operating_system)>) of
+[open-source core](https://en.wikipedia.org/wiki/Darwin_(operating_system)) of
 macOS.)
 
 Let's try to integrate this information into our "hello" message. The Elvish
@@ -344,7 +358,7 @@ running this command directly, we can first **capture** its output in a
 variable:
 
 ```elvish-transcript
-~> os = (uname)
+~> var os = (uname)
 ~> echo Hello, $E:USER, $os user!
 Hello, elf, Linux user!
 ```
@@ -415,17 +429,17 @@ done
 The for-loop we just show can also be written in a functional style:
 
 ```elvish
-each [name]{
+each {|name|
     echo 'Hello, '$name'!'
 } $first-triumvirate
 ```
 
-This looks similar to the for-loop version, but it makes use of a remarkable construct -- an **anonymous function**, also known as a **lambda**. In elvish, a lambda is syntactically formed by an argument list followed immediately (without space) by a function body enclosed in braces. Here, `[name]{ echo 'Hello, '$name'!' }` is a lambda that takes exactly one argument and calls `echo` to do the helloing. We pass it along a list to the `each` builtin, which runs the function on each element of the list.
+This looks similar to the for-loop version, but it makes use of a remarkable construct -- an **anonymous function**, also known as a **lambda**. In elvish, a lambda is syntactically formed by an argument list followed immediately (without space) by a function body enclosed in braces. Here, `{|name| echo 'Hello, '$name'!' }` is a lambda that takes exactly one argument and calls `echo` to do the helloing. We pass it along a list to the `each` builtin, which runs the function on each element of the list.
 
 Functions, like strings and lists, can be stored in variables:
 
 ```elvish
-hello=[name]{ echo 'Hello, '$name'!' }
+hello={|name| echo 'Hello, '$name'!' }
 each $hello $first-triumvirate
 ```
 
@@ -438,7 +452,7 @@ $hello 'Mark Antony' # Hello, Mark Anthony!
 You must have noticed that you have to use `$hello` instead of `hello` to call the function. This is because the *hello-the-variable* and *hello-the-command* are different enitites. To define new commands, use the `fn` special form:
 
 ```elvish
-fn hello [name]{
+fn hello {|name|
     echo 'Hello, '$name'!'
 }
 hello Cicero # Hello, Cicero!
@@ -457,7 +471,7 @@ each $hello~ $first-triumvirate # (Hello to the first triumvirate)
 Conversely, defining a variable `hello~` will also create a command named `hello`:
 
 ```elvish
-hello~ = [name]{ echo "Hello, hello, "$name"!" }
+hello~ = {|name| echo "Hello, hello, "$name"!" }
 hello Augustus # Hello, Augustus!
 ```
 

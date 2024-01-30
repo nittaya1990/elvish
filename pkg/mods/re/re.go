@@ -2,24 +2,23 @@
 package re
 
 import (
-	"fmt"
 	"regexp"
 
 	"src.elv.sh/pkg/eval"
+	"src.elv.sh/pkg/eval/errs"
 	"src.elv.sh/pkg/eval/vals"
-	"src.elv.sh/pkg/persistent/vector"
 )
 
 // Ns is the namespace for the re: module.
-var Ns = eval.NsBuilder{}.AddGoFns("re:", fns).Ns()
-
-var fns = map[string]interface{}{
-	"quote":   regexp.QuoteMeta,
-	"match":   match,
-	"find":    find,
-	"replace": replace,
-	"split":   split,
-}
+var Ns = eval.BuildNsNamed("re").
+	AddGoFns(map[string]any{
+		"quote":   regexp.QuoteMeta,
+		"match":   match,
+		"find":    find,
+		"replace": replace,
+		"split":   split,
+		"awk":     eval.Eawk,
+	}).Ns()
 
 type matchOpts struct{ Posix bool }
 
@@ -53,7 +52,7 @@ func find(fm *eval.Frame, opts findOpts, argPattern, source string) error {
 
 	for _, match := range matches {
 		start, end := match[0], match[1]
-		groups := vector.Empty
+		groups := vals.EmptyList
 		for i := 0; i < len(match); i += 2 {
 			start, end := match[i], match[i+1]
 			text := ""
@@ -62,7 +61,7 @@ func find(fm *eval.Frame, opts findOpts, argPattern, source string) error {
 			if start >= 0 && end >= 0 {
 				text = source[start:end]
 			}
-			groups = groups.Cons(submatchStruct{text, start, end})
+			groups = groups.Conj(submatchStruct{text, start, end})
 		}
 		err := out.Put(matchStruct{source[start:end], start, end, groups})
 		if err != nil {
@@ -80,7 +79,7 @@ type replaceOpts struct {
 
 func (*replaceOpts) SetDefaultOptions() {}
 
-func replace(fm *eval.Frame, opts replaceOpts, argPattern string, argRepl interface{}, source string) (string, error) {
+func replace(fm *eval.Frame, opts replaceOpts, argPattern string, argRepl any, source string) (string, error) {
 
 	pattern, err := makePattern(argPattern, opts.Posix, opts.Longest)
 	if err != nil {
@@ -90,9 +89,8 @@ func replace(fm *eval.Frame, opts replaceOpts, argPattern string, argRepl interf
 	if opts.Literal {
 		repl, ok := argRepl.(string)
 		if !ok {
-			return "", fmt.Errorf(
-				"replacement must be string when literal is set, got %s",
-				vals.Kind(argRepl))
+			return "", &errs.BadValue{What: "literal replacement",
+				Valid: "string", Actual: vals.Kind(argRepl)}
 		}
 		return pattern.ReplaceAllLiteralString(source, repl), nil
 	}
@@ -106,30 +104,29 @@ func replace(fm *eval.Frame, opts replaceOpts, argPattern string, argRepl interf
 				return ""
 			}
 			values, err := fm.CaptureOutput(func(fm *eval.Frame) error {
-				return repl.Call(fm, []interface{}{s}, eval.NoOpts)
+				return repl.Call(fm, []any{s}, eval.NoOpts)
 			})
 			if err != nil {
 				errReplace = err
 				return ""
 			}
 			if len(values) != 1 {
-				errReplace = fmt.Errorf("replacement function must output exactly one value, got %d", len(values))
+				errReplace = &errs.ArityMismatch{What: "replacement function output",
+					ValidLow: 1, ValidHigh: 1, Actual: len(values)}
 				return ""
 			}
 			output, ok := values[0].(string)
 			if !ok {
-				errReplace = fmt.Errorf(
-					"replacement function must output one string, got %s",
-					vals.Kind(values[0]))
+				errReplace = &errs.BadValue{What: "replacement function output",
+					Valid: "string", Actual: vals.Kind(values[0])}
 				return ""
 			}
 			return output
 		}
 		return pattern.ReplaceAllStringFunc(source, replFunc), errReplace
 	default:
-		return "", fmt.Errorf(
-			"replacement must be string or function, got %s",
-			vals.Kind(argRepl))
+		return "", &errs.BadValue{What: "replacement",
+			Valid: "string or function", Actual: vals.Kind(argRepl)}
 	}
 }
 

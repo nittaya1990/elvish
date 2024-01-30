@@ -2,7 +2,6 @@
 package glob
 
 import (
-	"io/ioutil"
 	"os"
 	"runtime"
 	"unicode/utf8"
@@ -64,28 +63,35 @@ func isDrive(s string) bool {
 
 // glob finds all filenames matching the given Segments in the given dir, and
 // calls the callback on all of them. If the callback returns false, globbing is
-// interrupted, and glob returns false. Otherwise it returns true.
+// interrupted, and glob returns false. Otherwise it returns true. Files that
+// can't be lstat'ed and directories that can't be read are ignored silently.
 func glob(segs []Segment, dir string, cb func(PathInfo) bool) bool {
 	// Consume non-wildcard path elements simply by following the path. This may
 	// seem like an optimization, but is actually required for "." and ".." to
 	// be used as path elements, as they do not appear in the result of ReadDir.
+	// It is also required for handling directory components that are actually
+	// symbolic links to directories.
 	for len(segs) > 1 && IsLiteral(segs[0]) && IsSlash(segs[1]) {
 		elem := segs[0].(Literal).Data
 		segs = segs[2:]
 		dir += elem + "/"
-		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		// This will correctly resolve symbolic links when they appear literally
+		// (e.g. in "link-to-dir/*") despite the use of Lstat, since a trailing
+		// slash always causes symbolic links to be resolved
+		// (https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/V1_chap04.html#tag_04_13).
+		if info, err := os.Lstat(dir); err != nil || !info.IsDir() {
 			return true
 		}
 	}
 
 	if len(segs) == 0 {
-		if info, err := os.Stat(dir); err == nil {
+		if info, err := os.Lstat(dir); err == nil {
 			return cb(PathInfo{dir, info})
 		}
 		return true
 	} else if len(segs) == 1 && IsLiteral(segs[0]) {
 		path := dir + segs[0].(Literal).Data
-		if info, err := os.Stat(path); err == nil {
+		if info, err := os.Lstat(path); err == nil {
 			return cb(PathInfo{path, info})
 		}
 		return true
@@ -93,7 +99,7 @@ func glob(segs []Segment, dir string, cb func(PathInfo) bool) bool {
 
 	infos, err := readDir(dir)
 	if err != nil {
-		// TODO(xiaq): Silently drop the error.
+		// Ignore directories that can't be read.
 		return true
 	}
 
@@ -161,12 +167,17 @@ func glob(segs []Segment, dir string, cb func(PathInfo) bool) bool {
 	for _, info := range infos {
 		name := info.Name()
 		if matchElement(segs, name) {
-			dirname := dir + name
-			info, err := os.Stat(dirname)
+			fullname := dir + name
+			info, err := os.Lstat(fullname)
 			if err != nil {
-				return true
+				// Either the file was removed between ReadDir and Lstat, or the
+				// OS has some special rule that prevents it from being lstat'ed
+				// (see b.elv.sh/1674 for a known case on macOS; SELinux and
+				// FreeBSD's MAC might be able to do the same). In either case,
+				// ignore the file.
+				continue
 			}
-			if !cb(PathInfo{dirname, info}) {
+			if !cb(PathInfo{fullname, info}) {
 				return false
 			}
 		}
@@ -174,13 +185,12 @@ func glob(segs []Segment, dir string, cb func(PathInfo) bool) bool {
 	return true
 }
 
-// readDir is just like ioutil.ReadDir except that it treats an argument of ""
-// as ".".
-func readDir(dir string) ([]os.FileInfo, error) {
+// readDir is just like os.ReadDir except that it treats an argument of "" as ".".
+func readDir(dir string) ([]os.DirEntry, error) {
 	if dir == "" {
 		dir = "."
 	}
-	return ioutil.ReadDir(dir)
+	return os.ReadDir(dir)
 }
 
 // matchElement matches a path element against segments, which may not contain
@@ -250,7 +260,7 @@ segs:
 
 // matchFixedLength returns whether a run of fixed-length segments (Literal and
 // Question) matches a prefix of name. It returns whether the match is
-// successful and if if it is, the remaining part of name.
+// successful and if it is, the remaining part of name.
 func matchFixedLength(segs []Segment, name string) (bool, string) {
 	for _, seg := range segs {
 		if name == "" {

@@ -8,22 +8,22 @@ import (
 
 var elementTests = []struct {
 	name         string
-	oldContainer interface{}
-	indices      []interface{}
-	elemValue    interface{}
-	newContainer interface{}
+	oldContainer any
+	indices      []any
+	elemValue    any
+	newContainer any
 }{
 	{
 		"single level",
 		vals.MakeMap("k1", "v1", "k2", "v2"),
-		[]interface{}{"k1"}, "new v1",
+		[]any{"k1"}, "new v1",
 		vals.MakeMap("k1", "new v1", "k2", "v2"),
 	},
 	{
 		"multi level",
 		vals.MakeMap(
 			"k1", vals.MakeMap("k1a", "v1a", "k1b", "v1b"), "k2", "v2"),
-		[]interface{}{"k1", "k1a"}, "new v1a",
+		[]any{"k1", "k1a"}, "new v1a",
 		vals.MakeMap(
 			"k1", vals.MakeMap("k1a", "new v1a", "k1b", "v1b"), "k2", "v2"),
 	},
@@ -54,21 +54,21 @@ func TestElement(t *testing.T) {
 
 var delElementTests = []struct {
 	name         string
-	oldContainer interface{}
-	indices      []interface{}
-	newContainer interface{}
+	oldContainer any
+	indices      []any
+	newContainer any
 }{
 	{
 		"single level",
 		vals.MakeMap("k1", "v1", "k2", "v2"),
-		[]interface{}{"k1"},
+		[]any{"k1"},
 		vals.MakeMap("k2", "v2"),
 	},
 	{
 		"multi level",
 		vals.MakeMap(
 			"k1", vals.MakeMap("k1a", "v1a", "k1b", "v1b"), "k2", "v2"),
-		[]interface{}{"k1", "k1a"},
+		[]any{"k1", "k1a"},
 		vals.MakeMap("k1", vals.MakeMap("k1b", "v1b"), "k2", "v2"),
 	},
 }
@@ -81,8 +81,8 @@ func TestDelElement(t *testing.T) {
 			DelElement(FromPtr(&m), test.indices)
 			if !vals.Equal(m, test.newContainer) {
 				t.Errorf("After deleting, map is %v, want %v",
-					vals.Repr(m, vals.NoPretty),
-					vals.Repr(test.newContainer, vals.NoPretty))
+					vals.ReprPlain(m),
+					vals.ReprPlain(test.newContainer))
 			}
 		})
 	}
